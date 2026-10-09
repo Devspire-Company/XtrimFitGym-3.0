@@ -1,75 +1,52 @@
-# XtrimFitGym 3.0 PWAs
+# XtrimFitGym 3.0
 
-This folder contains the new frontend foundation described in `PWA_NFC_SYSTEM_PROPOSAL.md`:
+XtrimFitGym 3.0 replaces the biometric/Clerk prototype with one connected system:
 
-- `Admin Web` — administrator/owner operations, membership workflow, R80C attendance mode, cards, walk-ins, cash payments and reports.
-- `Member Web` — member login, forced first-password change, membership, personal attendance, coaches, gym status and account security.
+- `Admin Web` — installable Admin PWA for membership enrollment, cash payments, NFC cards, attendance, walk-ins, plans, and gym settings.
+- `Member Web` — installable Member PWA for membership status, personal attendance, coaches, gym status, and password management.
+- `Api` — Node/Express REST API with MongoDB Atlas, custom accounts, secure server-side sessions, authorization, transactions, and audit records.
 
-Neither application uses Clerk. Both assume secure API-managed sessions stored in `HttpOnly`, `Secure`, `SameSite` cookies. Business data is never fabricated in the frontend; when the 3.0 API is unavailable, the UI shows an explicit connection state.
+No Clerk, MySQL, Railway, mobile APK, or biometric device is required by 3.0.
 
 ## Local setup
 
 ```powershell
-cd "XtrimFitGym 3.0"
-npm run install:all
+cd "C:\Users\Asus\Desktop\XtrimFitGym\XtrimFitGym 3.0"
+npm.cmd run install:all
+Copy-Item "Api\.env.example" "Api\.env.local"
 Copy-Item "Admin Web\.env.example" "Admin Web\.env.local"
 Copy-Item "Member Web\.env.example" "Member Web\.env.local"
-npm run dev:admin
 ```
 
-Run `npm run dev:member` in a second terminal. Admin uses port `3100`; Member uses port `3200`.
+Complete `Api/.env.local` with the new MongoDB Atlas connection and random secrets. Then open three PowerShell terminals:
 
-### Review the UI before the 3.0 API exists
+```powershell
+npm.cmd run dev:api
+npm.cmd run dev:admin
+npm.cmd run dev:member
+```
 
-For local visual review only, set `VITE_DEV_PREVIEW=true` in the relevant `.env.local`. This bypass exists only while Vite is running in development mode, creates no records, and displays no invented business figures. API-backed panels will honestly show that the API is unavailable. Production builds always require real authentication.
+- API: `http://localhost:4000`
+- Admin PWA: `http://localhost:3100`
+- Member PWA: `http://localhost:3200`
 
-## Deployment
+Before the first sign-in, create the owner and reception station exactly once. See `Api/README.md`.
 
-Create two separate Vercel projects from the same repository:
+## Verified commands
 
-| Project | Root directory | Build command | Output |
-|---|---|---|---|
-| Admin PWA | `XtrimFitGym 3.0/Admin Web` | `npm run build` | `dist` |
-| Member PWA | `XtrimFitGym 3.0/Member Web` | `npm run build` | `dist` |
+```powershell
+npm.cmd run typecheck
+npm.cmd test
+npm.cmd run build
+```
 
-Set `VITE_API_URL` to the future 3.0 API base URL in both projects. The API must allow credentials only from the two exact production origins.
+## Deployment order
 
-## Required API contract
+1. Create/configure the new MongoDB Atlas database.
+2. Create a **new** Render Web Service with root directory `Api`.
+3. Bootstrap the first owner and reception station against the production database.
+4. Create separate Vercel projects with root directories `Admin Web` and `Member Web`.
+5. Configure exact production origins in Render and the new API URL in both Vercel projects.
+6. Test login, forced password change, plan creation, enrollment/payment, card assignment, attendance, duplicate scan rejection, walk-in payment, and member history before real use.
 
-The current legacy API does not yet provide this contract. These endpoints must be implemented before production use.
-
-### Shared authentication
-
-- `GET /v1/auth/me`
-- `POST /v1/auth/login` — `{ username, password, portal, cardToken? }`
-- `POST /v1/auth/logout`
-- `POST /v1/auth/first-password`
-
-### Admin
-
-- `GET /v1/admin/dashboard`
-- `GET /v1/admin/members`
-- `POST /v1/admin/members/enroll` — atomic member, cash payment, membership and account creation
-- `GET /v1/admin/nfc-cards`
-- `POST /v1/admin/nfc-cards/assign`
-- `POST /v1/admin/nfc-cards/revoke`
-- `GET /v1/admin/attendance`
-- `POST /v1/admin/attendance/scan` — registered station and duplicate protection required
-- `GET/POST /v1/admin/walk-ins`
-- `GET /v1/admin/payments`
-
-### Member
-
-- `GET /v1/member/card/:token` — public-safe recognition only; never return private data
-- `GET /v1/member/overview`
-- `GET /v1/member/attendance`
-- `GET /v1/member/coaches`
-- `PUT /v1/member/password`
-
-Every authorization decision, temporary-password restriction, card status check, payment state, duplicate scan rule and role check must be enforced by the API. The PWA is not a security boundary.
-
-## PWA behavior
-
-Both apps include a manifest, installable identity and conservative service worker. The service worker caches only the application shell; it does not cache API responses containing private member or financial information.
-
-The SVG icon is a temporary code-native application mark. Before public launch, export approved square 192×192 and 512×512 brand icons and update each manifest for the best install experience.
+Do not connect 3.0 to the old 2.0 database or old Render API. Do not commit `.env.local`, session secrets, database credentials, temporary passwords, or NFC portal URLs.

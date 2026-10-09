@@ -1,0 +1,10 @@
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.form-grid label,.setting-field{display:grid;gap:7px;color:#c9cdd2;font-size:11px;font-weight:700}
+.form-grid input,.form-grid select,.setting-field input,.setting-field select{width:100%;height:42px;border:1px solid var(--line);border-radius:8px;background:#0b0e11;color:#f3f2ed;padding:0 11px;outline:0}
+.form-grid input:focus,.form-grid select:focus,.setting-field input:focus,.setting-field select:focus{border-color:#686044}
+.full-row{grid-column:1/-1}
+.credential-box{display:grid;gap:9px;padding:15px;border:1px solid rgba(243,197,43,.24);background:rgba(243,197,43,.06);border-radius:9px;font-size:12px}
+.credential-box strong{color:var(--yellow);margin-bottom:4px}
+.break-all{word-break:break-all}
+.settings-save{display:flex;justify-content:flex-end;align-items:center;gap:14px;margin-top:16px;color:var(--yellow);font-size:12px}
+@media(max-width:560px){.form-grid{grid-template-columns:1fr}.full-row{grid-column:auto}}

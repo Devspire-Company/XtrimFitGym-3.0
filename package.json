@@ -3,10 +3,12 @@
   "private": true,
   "version": "3.0.0",
   "scripts": {
-    "install:all": "npm --prefix \"Admin Web\" install && npm --prefix \"Member Web\" install",
+    "install:all": "npm --prefix \"Api\" install && npm --prefix \"Admin Web\" install && npm --prefix \"Member Web\" install",
+    "dev:api": "npm --prefix \"Api\" run dev",
     "dev:admin": "npm --prefix \"Admin Web\" run dev",
     "dev:member": "npm --prefix \"Member Web\" run dev",
-    "build": "npm --prefix \"Admin Web\" run build && npm --prefix \"Member Web\" run build",
-    "typecheck": "npm --prefix \"Admin Web\" run typecheck && npm --prefix \"Member Web\" run typecheck"
+    "build": "npm --prefix \"Api\" run build && npm --prefix \"Admin Web\" run build && npm --prefix \"Member Web\" run build",
+    "typecheck": "npm --prefix \"Api\" run typecheck && npm --prefix \"Admin Web\" run typecheck && npm --prefix \"Member Web\" run typecheck",
+    "test": "npm --prefix \"Api\" test"
   }
 }

@@ -45,7 +45,7 @@ const membershipPlanSchema = new Schema({
 }, options);
 
 const membershipSchema = new Schema({
-  memberId: { type: Schema.Types.ObjectId, ref: 'Member', required: true, index: true },
+  memberId: { type: Schema.Types.ObjectId, ref: 'Member', required: true },
   planId: { type: Schema.Types.ObjectId, ref: 'MembershipPlan', required: true },
   planName: { type: String, required: true },
   pricePaid: { type: Number, required: true, min: 0 },
@@ -74,7 +74,7 @@ const paymentSchema = new Schema({
 const nfcCardSchema = new Schema({
   uid: { type: String, required: true, unique: true, uppercase: true, trim: true, index: true },
   portalTokenHash: { type: String, required: true, unique: true, select: false },
-  memberId: { type: Schema.Types.ObjectId, ref: 'Member', required: true, index: true },
+  memberId: { type: Schema.Types.ObjectId, ref: 'Member', required: true },
   status: { type: String, enum: ['ACTIVE', 'REVOKED', 'LOST', 'REPLACED'], default: 'ACTIVE', index: true },
   assignedBy: { type: Schema.Types.ObjectId, ref: 'Account', required: true },
   assignedAt: { type: Date, required: true, default: Date.now },

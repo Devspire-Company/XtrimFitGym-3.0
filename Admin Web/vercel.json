@@ -1,0 +1,6 @@
+{
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "https://xtrimfitgym-3-0.onrender.com/v1/:path*" },
+    { "source": "/:path*", "destination": "/index.html" }
+  ]
+}

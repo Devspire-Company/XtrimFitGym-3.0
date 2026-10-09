@@ -1,0 +1,12 @@
+{
+  "name": "xtrimfitgym-3-pwas",
+  "private": true,
+  "version": "3.0.0",
+  "scripts": {
+    "install:all": "npm --prefix \"Admin Web\" install && npm --prefix \"Member Web\" install",
+    "dev:admin": "npm --prefix \"Admin Web\" run dev",
+    "dev:member": "npm --prefix \"Member Web\" run dev",
+    "build": "npm --prefix \"Admin Web\" run build && npm --prefix \"Member Web\" run build",
+    "typecheck": "npm --prefix \"Admin Web\" run typecheck && npm --prefix \"Member Web\" run typecheck"
+  }
+}

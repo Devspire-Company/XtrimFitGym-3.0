@@ -1,0 +1,13 @@
+{
+  "name": "X-TRIM FIT GYM Admin",
+  "short_name": "X-TRIM Admin",
+  "description": "Membership, NFC attendance, walk-ins, payments and gym operations.",
+  "start_url": "/dashboard",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#090b0d",
+  "theme_color": "#0a0c0f",
+  "icons": [
+    { "src": "/app-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

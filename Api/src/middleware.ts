@@ -43,6 +43,6 @@ export function verifyMutationOrigin(req: Request, _res: Response, next: NextFun
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
   const origin = req.get('origin');
   if (!origin || !config().allowedOrigins.includes(origin)) return next(new HttpError(403, 'Request origin is not allowed.'));
+  if (req.get('x-xtrim-request') !== '1') return next(new HttpError(403, 'Request verification failed.'));
   next();
 }
-

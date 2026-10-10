@@ -18,11 +18,16 @@ export function createApp() {
   app.use(cors({ origin(origin, callback) {
     if (!origin || config().allowedOrigins.includes(origin)) return callback(null, true);
     callback(new HttpError(403, 'Request origin is not allowed.'));
-  }, credentials: true, methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'] }));
+  }, credentials: true, methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'], allowedHeaders: ['Content-Type', 'X-XTRIM-Request', 'X-Attendance-Station'] }));
   app.use(express.json({ limit: '100kb' }));
   app.use(cookieParser());
   app.use(authenticate);
   app.use(verifyMutationOrigin);
+  app.use('/v1', (_req, res, next) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Pragma', 'no-cache');
+    next();
+  });
 
   app.get('/health', (_req, res) => res.json({ status: 'ok' }));
   app.get('/ready', (_req, res) => {

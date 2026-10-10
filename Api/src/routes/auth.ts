@@ -24,7 +24,7 @@ function cookieOptions(maxAge?: number) {
   return {
     httpOnly: true,
     secure: config().NODE_ENV === 'production',
-    sameSite: config().NODE_ENV === 'production' ? 'none' as const : 'lax' as const,
+    sameSite: 'lax' as const,
     path: '/',
     ...(maxAge === undefined ? {} : { maxAge }),
   };

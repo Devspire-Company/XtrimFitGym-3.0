@@ -1,0 +1,295 @@
+html {
+  scrollbar-color: #292e34 #080a0c;
+  scrollbar-width: thin;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: #080a0c;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #292e34;
+  border: 2px solid #080a0c;
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #383e45;
+}
+
+.identity {
+  width: 218px;
+  min-width: 218px;
+  height: 52px;
+  padding: 0 14px;
+  gap: 13px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 11px;
+  background:
+    linear-gradient(112deg, rgba(255, 255, 255, 0.035), transparent 42%),
+    rgba(13, 16, 20, 0.78);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.035),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.34),
+    0 8px 24px rgba(0, 0, 0, 0.16);
+}
+
+.identity .avatar {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  border-color: rgba(199, 168, 58, 0.3);
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 35% 28%, rgba(255, 255, 255, 0.075), transparent 36%),
+    #15191e;
+  color: #c2a33a;
+  font-family: Manrope, sans-serif;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  box-shadow:
+    0 0 0 3px rgba(255, 255, 255, 0.022),
+    inset 0 1px 1px rgba(255, 255, 255, 0.06),
+    inset 0 -3px 6px rgba(0, 0, 0, 0.34);
+}
+
+.identity > div {
+  min-width: 0;
+}
+
+.identity strong,
+.identity small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.identity strong {
+  font-family: Manrope, sans-serif;
+  font-size: 13px;
+  font-weight: 750;
+  letter-spacing: -0.02em;
+  color: #ebeae5;
+}
+
+.identity small {
+  margin-top: 3px;
+  color: #858c95;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.dashboard-page {
+  margin-top: -10px;
+}
+
+.dashboard-page .hero {
+  min-height: 210px;
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  padding: 25px 36px;
+  margin-bottom: 26px;
+  background: #080a0c;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.dashboard-page .hero > .hero-copy {
+  position: relative;
+  z-index: 4;
+  max-width: 620px;
+}
+
+.dashboard-page .hero h2 {
+  margin: 10px 0 16px;
+  font-size: clamp(44px, 6vw, 68px);
+  line-height: 0.88;
+  text-transform: uppercase;
+}
+
+.dashboard-page .hero h2 span,
+.dashboard-page .hero h2 em {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  color: transparent;
+  background-clip: text;
+  -webkit-background-clip: text;
+  filter: drop-shadow(0 2px 1px rgba(0, 0, 0, 0.38));
+}
+
+.dashboard-page .hero h2 span {
+  background-image:
+    radial-gradient(circle, rgba(10, 12, 14, 0.24) 0 1px, transparent 1.4px),
+    linear-gradient(168deg, #fff 8%, #d8d9d6 48%, #f7f5ed 75%, #b9bdc1);
+  background-size: 5px 5px, 100% 100%;
+}
+
+.dashboard-page .hero h2 em {
+  font-style: normal;
+  background-image:
+    radial-gradient(circle, rgba(65, 42, 0, 0.28) 0 1px, transparent 1.45px),
+    linear-gradient(165deg, #ffe064 4%, #e7ad13 48%, #ffd342 78%, #b97908);
+  background-size: 5px 5px, 100% 100%;
+}
+
+.dashboard-page .hero p {
+  max-width: 520px;
+  margin-bottom: 0;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.dashboard-page .hero-image {
+  position: absolute;
+  z-index: 1;
+  inset: 0 0 0 34%;
+  background-color: #080a0c;
+  background-image: url('/login-gym-v2.png');
+  background-position: right 28%;
+  background-size: 92% auto;
+  background-repeat: no-repeat;
+  filter: grayscale(1) contrast(1.12) brightness(0.72);
+  opacity: 0.82;
+  mask-image: linear-gradient(90deg, transparent 0%, rgba(0, 0, 0, 0.18) 15%, #000 48%);
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, rgba(0, 0, 0, 0.18) 15%, #000 48%);
+}
+
+.dashboard-page .hero::after {
+  content: '';
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  background: linear-gradient(90deg, #080a0c 0%, rgba(8, 10, 12, 0.97) 31%, rgba(8, 10, 12, 0.28) 58%, rgba(8, 10, 12, 0.04) 100%);
+  pointer-events: none;
+}
+
+.dashboard-page .stats {
+  grid-template-columns: repeat(6, minmax(138px, 1fr));
+  gap: 14px;
+  margin-bottom: 24px;
+}
+
+.dashboard-page .stat {
+  min-height: 172px;
+  padding: 20px 20px 23px;
+  background: linear-gradient(145deg, rgba(26, 31, 37, 0.74), rgba(13, 16, 20, 0.66));
+  border-color: rgba(255, 255, 255, 0.105);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035), 0 12px 35px rgba(0, 0, 0, 0.14);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.dashboard-page .stat-icon {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.085);
+  border-radius: 50%;
+  background: linear-gradient(145deg, #282d33, #171b20 68%);
+  box-shadow:
+    inset 1px 1px 1px rgba(255, 255, 255, 0.075),
+    inset -2px -2px 4px rgba(0, 0, 0, 0.42),
+    0 4px 9px rgba(0, 0, 0, 0.24);
+  transform: translate(-3px, -3px);
+}
+
+.dashboard-page .stat-icon svg {
+  width: 20px;
+  height: 20px;
+  color: #c7a83a;
+  filter: drop-shadow(0 1px 0 rgba(0, 0, 0, 0.65));
+}
+
+.dashboard-page .stat-copy {
+  display: grid;
+  gap: 6px;
+}
+
+.dashboard-page .stat span {
+  color: #a5abb3;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.045em;
+  white-space: nowrap;
+}
+
+.dashboard-page .stat strong {
+  color: #f7f6f1;
+  font-size: 36px;
+  line-height: 1;
+}
+
+.dashboard-page .stat-peso {
+  font-family: Manrope, sans-serif;
+  font-size: 0.78em;
+  font-weight: 800;
+  letter-spacing: -0.08em;
+  margin-right: 2px;
+  vertical-align: 0.06em;
+}
+
+@media (max-width: 1180px) {
+  .dashboard-page .stats {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 760px) {
+  .identity {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    padding: 2px;
+    border-radius: 50%;
+  }
+
+  .identity .avatar {
+    width: 38px;
+    height: 38px;
+  }
+
+  .dashboard-page {
+    margin-top: -4px;
+  }
+
+  .dashboard-page .hero {
+    min-height: 250px;
+    padding: 27px;
+  }
+
+  .dashboard-page .hero-image {
+    inset: 0;
+    opacity: 0.42;
+    background-position: center 38%;
+    background-size: cover;
+    mask-image: none;
+    -webkit-mask-image: none;
+  }
+
+  .dashboard-page .hero::after {
+    background: linear-gradient(90deg, rgba(8, 10, 12, 0.98), rgba(8, 10, 12, 0.7));
+  }
+
+  .dashboard-page .stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 420px) {
+  .dashboard-page .stats {
+    grid-template-columns: 1fr;
+  }
+}

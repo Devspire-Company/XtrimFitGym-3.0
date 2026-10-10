@@ -31,16 +31,32 @@ const memberSchema = new Schema({
   phone: { type: String, default: null, index: true },
   email: { type: String, default: null, lowercase: true, trim: true, index: true },
   birthDate: { type: Date, default: null },
-  emergencyContact: { type: String, default: null },
+  emergencyContact: {
+    name: { type: String, trim: true, default: null },
+    relationship: { type: String, trim: true, default: null },
+    phone: { type: String, trim: true, default: null },
+  },
+  enrollmentConsent: {
+    termsAcceptedAt: { type: Date, default: null },
+    privacyAcceptedAt: { type: Date, default: null },
+    liabilityAcceptedAt: { type: Date, default: null },
+    version: { type: String, default: null },
+    recordedBy: { type: Schema.Types.ObjectId, ref: 'Account', default: null },
+  },
   photoUrl: { type: String, default: null },
   status: { type: String, enum: ['ACTIVE', 'DISABLED'], default: 'ACTIVE', index: true },
   sourceWalkInProfileId: { type: Schema.Types.ObjectId, ref: 'WalkInProfile', default: null },
+  memberType: { type: String, enum: ['STUDENT', 'REGULAR'], default: 'REGULAR', index: true },
+  studentVerifiedAt: { type: Date, default: null },
+  studentVerifiedBy: { type: Schema.Types.ObjectId, ref: 'Account', default: null },
 }, options);
 
 const membershipPlanSchema = new Schema({
   name: { type: String, required: true, unique: true, trim: true },
   price: { type: Number, required: true, min: 0 },
   durationDays: { type: Number, required: true, min: 1 },
+  eligibility: { type: String, enum: ['ALL', 'STUDENT', 'REGULAR'], default: 'ALL', index: true },
+  isPromo: { type: Boolean, default: false },
   isActive: { type: Boolean, default: true, index: true },
 }, options);
 
@@ -53,15 +69,28 @@ const membershipSchema = new Schema({
   expiresAt: { type: Date, required: true, index: true },
   status: { type: String, enum: ['ACTIVE', 'PAUSED', 'CANCELLED', 'EXPIRED'], required: true, default: 'ACTIVE', index: true },
   activatedBy: { type: Schema.Types.ObjectId, ref: 'Account', required: true },
+  pausedAt: { type: Date, default: null },
+  remainingMillisecondsAtPause: { type: Number, default: null, min: 0 },
+  statusChangedAt: { type: Date, default: null },
+  statusChangedBy: { type: Schema.Types.ObjectId, ref: 'Account', default: null },
+  statusReason: { type: String, default: null },
 }, options);
 membershipSchema.index({ memberId: 1 }, { unique: true, partialFilterExpression: { status: 'ACTIVE' } });
+
+const membershipLockSchema = new Schema({
+  _id: { type: Schema.Types.ObjectId, required: true },
+  touchedAt: { type: Date, required: true, default: Date.now },
+}, { versionKey: false });
 
 const paymentSchema = new Schema({
   reference: { type: String, required: true, unique: true, index: true },
   memberId: { type: Schema.Types.ObjectId, ref: 'Member', default: null, index: true },
+  membershipId: { type: Schema.Types.ObjectId, ref: 'Membership', default: null, index: true },
   walkInProfileId: { type: Schema.Types.ObjectId, ref: 'WalkInProfile', default: null, index: true },
   type: { type: String, enum: ['MEMBERSHIP', 'WALK_IN', 'CARD_REPLACEMENT'], required: true, index: true },
   amountDue: { type: Number, required: true, min: 0 },
+  planAmount: { type: Number, default: 0, min: 0 },
+  membershipFee: { type: Number, default: 0, min: 0 },
   amountReceived: { type: Number, required: true, min: 0 },
   change: { type: Number, required: true, min: 0 },
   method: { type: String, enum: ['CASH'], default: 'CASH' },
@@ -92,9 +121,10 @@ const stationSchema = new Schema({
 
 const attendanceSchema = new Schema({
   memberId: { type: Schema.Types.ObjectId, ref: 'Member', required: true, index: true },
-  cardId: { type: Schema.Types.ObjectId, ref: 'NfcCard', required: true },
+  cardId: { type: Schema.Types.ObjectId, ref: 'NfcCard', default: null },
   stationId: { type: String, required: true, index: true },
   status: { type: String, enum: ['ACCEPTED', 'MANUAL'], default: 'ACCEPTED' },
+  reason: { type: String, default: null },
   recordedAt: { type: Date, required: true, default: Date.now, index: true },
   recordedBy: { type: Schema.Types.ObjectId, ref: 'Account', required: true },
 }, options);
@@ -132,6 +162,7 @@ const coachSchema = new Schema({
 const gymSettingsSchema = new Schema({
   key: { type: String, default: 'primary', unique: true },
   defaultWalkInFee: { type: Number, default: 70, min: 0 },
+  firstMembershipFee: { type: Number, default: 100, min: 0 },
   gymStatusOverride: { type: String, enum: ['AUTO', 'OPEN', 'CLOSED'], default: 'AUTO' },
   hoursToday: { type: String, default: 'Contact the gym for today\'s hours.' },
 }, options);
@@ -150,6 +181,7 @@ export const AuthSession = model('AuthSession', sessionSchema);
 export const Member = model('Member', memberSchema);
 export const MembershipPlan = model('MembershipPlan', membershipPlanSchema);
 export const Membership = model('Membership', membershipSchema);
+export const MembershipLock = model('MembershipLock', membershipLockSchema);
 export const Payment = model('Payment', paymentSchema);
 export const NfcCard = model('NfcCard', nfcCardSchema);
 export const AttendanceStation = model('AttendanceStation', stationSchema);

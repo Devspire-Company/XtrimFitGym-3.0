@@ -9,9 +9,11 @@
     "build": "tsc",
     "start": "node dist/src/server.js",
     "typecheck": "tsc --noEmit",
-    "test": "npm run build && node --test dist/tests/security.test.js",
+    "test": "npm run build && node --test dist/tests/security.test.js dist/tests/membership-lifecycle.test.js dist/tests/membership-pricing.test.js",
     "bootstrap:owner": "tsx --env-file=.env.local scripts/bootstrap-owner.ts",
-    "bootstrap:station": "tsx --env-file=.env.local scripts/bootstrap-station.ts"
+    "bootstrap:station": "tsx --env-file=.env.local scripts/bootstrap-station.ts",
+    "bootstrap:pricing": "tsx --env-file=.env.local scripts/bootstrap-pricing.ts",
+    "reset:owner-password": "tsx --env-file=.env.local scripts/reset-owner-password.ts"
   },
   "dependencies": {
     "bcryptjs": "^3.0.2",

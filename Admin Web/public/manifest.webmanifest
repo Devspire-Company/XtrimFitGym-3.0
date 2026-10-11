@@ -1,8 +1,8 @@
 {
-  "name": "X-TRIM FIT GYM Admin",
-  "short_name": "X-TRIM Admin",
-  "description": "Membership, NFC attendance, walk-ins, payments and gym operations.",
-  "start_url": "/dashboard",
+  "name": "X-TRIM FIT GYM",
+  "short_name": "X-TRIM",
+  "description": "Secure gym operations, membership, coach, and member portal.",
+  "start_url": "/login",
   "scope": "/",
   "display": "standalone",
   "background_color": "#090b0d",

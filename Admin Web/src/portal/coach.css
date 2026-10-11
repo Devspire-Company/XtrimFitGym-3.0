@@ -1,0 +1,37 @@
+.coach-hero {
+  min-height: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  overflow: hidden;
+  background:
+    linear-gradient(112deg, rgba(18, 22, 27, 0.98), rgba(18, 22, 27, 0.8)),
+    url('/login-gym-v2.png') right center / 55% auto;
+}
+
+.coach-hero h2 {
+  margin: 8px 0;
+  font-size: clamp(38px, 6vw, 64px);
+  text-transform: uppercase;
+}
+
+.coach-hero > svg {
+  width: 100px;
+  height: 100px;
+  margin-right: 7%;
+  color: rgba(243, 197, 43, 0.18);
+}
+
+.coach-attendance .tr {
+  grid-template-columns: 1fr 1fr 1fr;
+}
+
+@media (max-width: 680px) {
+  .coach-hero {
+    min-height: 230px;
+  }
+
+  .coach-hero > svg {
+    display: none;
+  }
+}

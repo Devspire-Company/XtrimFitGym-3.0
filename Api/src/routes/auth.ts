@@ -10,7 +10,7 @@ import { audit } from '../audit.js';
 
 export const authRouter = Router();
 const loginLimiter = rateLimit({ windowMs: 15 * 60_000, limit: 10, standardHeaders: 'draft-8', legacyHeaders: false, message: { message: 'Too many sign-in attempts. Please wait and try again.' } });
-const credentialsSchema = z.object({ username: z.string().min(3).max(100), password: z.string().min(8).max(200), portal: z.enum(['admin', 'member']), cardToken: z.string().min(20).max(200).optional() });
+const credentialsSchema = z.object({ username: z.string().min(3).max(100), password: z.string().min(8).max(200), portal: z.enum(['admin', 'member', 'unified']), cardToken: z.string().min(20).max(200).optional() });
 const passwordSchema = z.object({ currentPassword: z.string().min(8).max(200), newPassword: z.string().min(10).max(200).regex(/[a-z]/).regex(/[A-Z]/).regex(/[0-9]/) });
 const profileSchema = z.object({
   firstName: z.string().trim().min(1).max(80),
@@ -22,7 +22,7 @@ const profileSchema = z.object({
 function accountResponse(account: any) {
   return {
     id: String(account._id), username: account.username, firstName: account.firstName, lastName: account.lastName, role: account.role,
-    memberNumber: account.memberId?.memberNumber ?? undefined, mustChangePassword: Boolean(account.mustChangePassword),
+    memberNumber: account.memberId?.memberNumber ?? undefined, coachNumber: account.coachId?.coachNumber ?? undefined, mustChangePassword: Boolean(account.mustChangePassword),
   };
 }
 
@@ -38,13 +38,15 @@ function cookieOptions(maxAge?: number) {
 
 authRouter.post('/login', loginLimiter, asyncRoute(async (req, res) => {
   const input = credentialsSchema.parse(req.body);
-  const account = await Account.findOne({ username: normalizeUsername(input.username), isActive: true }).select('+passwordHash').populate('memberId', 'memberNumber').exec() as any;
+  const account = await Account.findOne({ username: normalizeUsername(input.username), isActive: true }).select('+passwordHash').populate('memberId', 'memberNumber').populate('coachId', 'coachNumber').exec() as any;
   const valid = account && await verifyPassword(input.password, account.passwordHash);
   if (!valid) throw new HttpError(401, 'Invalid username or password.');
   const isAdmin = account.role === 'OWNER' || account.role === 'ADMIN';
-  if ((input.portal === 'admin' && !isAdmin) || (input.portal === 'member' && account.role !== 'MEMBER')) throw new HttpError(403, 'This account cannot access this portal.');
+  const isCommunityUser = account.role === 'MEMBER' || account.role === 'COACH';
+  if ((input.portal === 'admin' && !isAdmin) || (input.portal === 'member' && !isCommunityUser)) throw new HttpError(403, 'This account cannot access this portal.');
 
   if (input.cardToken) {
+    if (account.role !== 'MEMBER') throw new HttpError(403, 'Membership cards can only open member accounts.');
     const card = await NfcCard.findOne({ portalTokenHash: portalTokenHash(input.cardToken), status: 'ACTIVE' }).select('+portalTokenHash').lean<any>();
     if (!card || String(card.memberId) !== String(account.memberId?._id ?? account.memberId)) throw new HttpError(403, 'This card is not linked to that account.');
   }
@@ -61,7 +63,7 @@ authRouter.post('/login', loginLimiter, asyncRoute(async (req, res) => {
 }));
 
 authRouter.get('/me', requireAuth, asyncRoute(async (req, res) => {
-  const account = await Account.findById(req.auth!.accountId).populate('memberId', 'memberNumber').lean<any>();
+  const account = await Account.findById(req.auth!.accountId).populate('memberId', 'memberNumber').populate('coachId', 'coachNumber').lean<any>();
   if (!account) throw new HttpError(401, 'Your account is no longer available.');
   res.json(accountResponse(account));
 }));

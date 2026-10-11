@@ -1,0 +1,34 @@
+name: Verify XtrimFitGym
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            Api/package-lock.json
+            Admin Web/package-lock.json
+      - name: Install API dependencies
+        working-directory: Api
+        run: npm ci
+      - name: Install web dependencies
+        working-directory: Admin Web
+        run: npm ci
+      - name: Type-check API
+        working-directory: Api
+        run: npm run typecheck
+      - name: Test API
+        working-directory: Api
+        run: npm test
+      - name: Build unified web application
+        working-directory: Admin Web
+        run: npm run build

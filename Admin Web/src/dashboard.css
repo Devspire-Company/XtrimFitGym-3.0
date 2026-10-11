@@ -241,9 +241,247 @@ html {
   vertical-align: 0.06em;
 }
 
+.dashboard-operations {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.dashboard-operations .panel {
+  min-width: 0;
+  padding: 21px;
+}
+
+.dashboard-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 15px;
+}
+
+.dashboard-section-head span {
+  color: #737b84;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.dashboard-section-head h3 {
+  margin-top: 6px;
+  font-size: 27px;
+}
+
+.dashboard-section-head > b {
+  min-width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 50%;
+  background: #181d22;
+  color: #858d96;
+  font-size: 12px;
+}
+
+.dashboard-section-head > b.has-items {
+  border-color: rgba(199, 168, 58, 0.25);
+  color: #c7b064;
+}
+
+.attention-list {
+  display: grid;
+  gap: 8px;
+}
+
+.attention-list > a {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 11px;
+  min-height: 72px;
+  padding: 13px;
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.attention-list > a:hover {
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.attention-icon {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #1a1f24;
+  color: #a79b6e;
+}
+
+.attention-icon svg {
+  width: 19px;
+}
+
+.attention-list strong,
+.attention-list small,
+.attention-clear strong,
+.attention-clear small {
+  display: block;
+}
+
+.attention-list strong,
+.attention-clear strong {
+  color: #dfe0dc;
+  font-size: 14px;
+  line-height: 1.3;
+}
+
+.attention-list small,
+.attention-clear small {
+  margin-top: 5px;
+  color: #747c85;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.attention-list > a > svg {
+  width: 17px;
+  color: #666e77;
+  transform: rotate(-90deg);
+}
+
+.attention-clear {
+  min-height: 105px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 16px;
+  border: 1px dashed rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+}
+
+.attention-clear > svg {
+  width: 23px;
+  color: #6fa686;
+}
+
+.shortcut-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.shortcut-grid > a {
+  min-width: 0;
+  min-height: 76px;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 14px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.shortcut-grid > a:hover {
+  border-color: rgba(199, 168, 58, 0.22);
+  background: rgba(199, 168, 58, 0.045);
+}
+
+.shortcut-grid > a > svg {
+  width: 21px;
+  height: 21px;
+  flex: 0 0 21px;
+  color: #99906e;
+}
+
+.shortcut-grid strong,
+.shortcut-grid small {
+  display: block;
+}
+
+.shortcut-grid strong {
+  color: #d9dbd9;
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.shortcut-grid small {
+  margin-top: 5px;
+  color: #717983;
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+
+.dashboard-activity {
+  padding: 0;
+  overflow: hidden;
+}
+
+.dashboard-activity-toggle {
+  width: 100%;
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 16px 21px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dashboard-activity-toggle:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.dashboard-activity-toggle h3 {
+  font-size: 21px;
+}
+
+.dashboard-activity-toggle span {
+  display: block;
+  margin-top: 4px;
+  color: #747c85;
+  font-size: 11px;
+}
+
+.dashboard-activity-toggle > svg {
+  width: 19px;
+  color: #858d96;
+  transition: transform 0.2s ease;
+}
+
+.dashboard-activity.is-open .dashboard-activity-toggle > svg {
+  transform: rotate(180deg);
+}
+
+.dashboard-activity .activity-list {
+  padding: 0 21px 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.065);
+}
+
+.dashboard-activity .state {
+  min-height: 150px;
+  border-top: 1px solid rgba(255, 255, 255, 0.065);
+}
+
 @media (max-width: 1180px) {
   .dashboard-page .stats {
     grid-template-columns: repeat(3, 1fr);
+  }
+
+  .dashboard-operations {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -290,6 +528,10 @@ html {
 
 @media (max-width: 420px) {
   .dashboard-page .stats {
+    grid-template-columns: 1fr;
+  }
+
+  .shortcut-grid {
     grid-template-columns: 1fr;
   }
 }

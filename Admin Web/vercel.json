@@ -15,5 +15,9 @@
   "rewrites": [
     { "source": "/api/:path*", "destination": "https://xtrimfitgym-3-0.onrender.com/v1/:path*" },
     { "source": "/:path*", "destination": "/index.html" }
+  ],
+  "redirects": [
+    { "source": "/dashboard", "destination": "/admin/dashboard", "permanent": true },
+    { "source": "/home", "destination": "/portal/home", "permanent": true }
   ]
 }

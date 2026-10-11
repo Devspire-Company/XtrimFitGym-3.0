@@ -1,4 +1,4 @@
-const CACHE = 'xtrim-admin-v1';
+const CACHE = 'xtrim-unified-v1';
 const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/app-icon.svg', '/logo.png'];
 self.addEventListener('install', (event) => event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL))));
 self.addEventListener('activate', (event) => event.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key))))));

@@ -9,6 +9,7 @@ import { errorHandler, HttpError, notFound } from './http.js';
 import { authRouter } from './routes/auth.js';
 import { adminRouter } from './routes/admin.js';
 import { memberRouter } from './routes/member.js';
+import { coachRouter } from './routes/coach.js';
 
 export function createApp() {
   const app = express();
@@ -37,6 +38,7 @@ export function createApp() {
   app.use('/v1/auth', authRouter);
   app.use('/v1/admin', adminRouter);
   app.use('/v1/member', memberRouter);
+  app.use('/v1/coach', coachRouter);
   app.use(notFound);
   app.use(errorHandler);
   return app;

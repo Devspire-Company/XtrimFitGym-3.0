@@ -1,276 +1,282 @@
-# XtrimFitGym 3.0 Admin Web Audit
+# XtrimFitGym 3.0 — Admin Web Audit
 
-**Audit scope:** Admin Web and supporting API only  
-**Deferred:** Physical NFC cards and USB NFC reader integration  
-**Current functional estimate:** Approximately 60% complete, excluding physical NFC work
+Audit date: 2026-10-11
 
-## Executive Summary
+Scope: Admin Web, shared authentication, admin API routes, database behavior, reporting, security, deployment, and test readiness.
 
-The Admin system already has a strong authentication, settings, enrollment, walk-in, payment, and dashboard foundation. However, it is not yet launch-complete.
+Implementation update (2026-10-11): The repository now includes Manila-time utilities and boundary tests, structured weekly/special-date gym schedules, announcement publishing, owner-only payment voiding, printable receipt details, a searchable owner audit screen, member/payment pagination, payment filters, global expired-session redirects, and a React error boundary. Checked items below were verified in code and by the current type-check/build/test commands; unchecked items still need work or an explicit business/operations decision.
 
-The most important remaining work is completing Member Management and the complete membership lifecycle. These records affect payments, attendance, NFC cards, reports, and the Member PWA.
+NFC note: NFC hardware/card improvements are intentionally tracked separately unless they affect a broader admin workflow.
 
-## Features Already Working
+## Executive verdict
 
-- Secure owner and administrator login
-- Forced password change for temporary administrator accounts
-- Profile and password settings
-- Active session and device management
-- Administrator account creation, disabling, and password reset
-- Gym status, displayed hours, and walk-in fee settings
-- Dashboard connected to real database records
-- Membership plan creation and listing
-- New member enrollment with membership and cash payment
-- New and returning walk-in recording
-- Cash payment listing
-- Basic attendance history
-- PWA installation foundation
-- API input validation
-- Bcrypt password hashing with a server-side pepper
-- HTTP-only session cookies
-- Request-origin and mutation verification
-- Content Security Policy and security headers
-- Owner and administrator role restrictions
-- Server-side audit record foundation
+The admin system is no longer a prototype. Its core operational flow is implemented end to end:
 
-## Critical Work Still Missing
+- owner/admin authentication and forced temporary-password replacement;
+- member enrollment with an atomic membership and cash payment;
+- member profile, membership lifecycle, attendance, walk-ins, coaches, plans, payments, and reports;
+- owner-only administrator and attendance-station management;
+- role checks, origin verification, secure cookies, rate-limited login, hashed passwords, and audit writes.
 
-### 1. Complete Member Management
+It is now ready for primary feature work to move to the member portal, but it is not yet production-complete. The largest remaining risks are missing database-backed transaction tests, attendance correction tooling, fixed limits in secondary collections, backup/monitoring readiness, and unresolved privacy/retention decisions.
 
-The current Members page can search, list, and create members. It still needs:
+Recommendation: proceed with the member portal against the now-stable schedule and announcement contracts while keeping the unchecked production-hardening items as a parallel release gate.
 
-- Complete member profile view
-- Personal-information editing
-- Member disabling and reactivation
-- Membership history
-- Payment history
-- Attendance history
-- Member password reset
-- Walk-in-to-member conversion
-- Duplicate-member detection using phone number, email, or other matching information
+## Current module status
 
-### 2. Complete the Membership Lifecycle
+| Module | Status | Notes |
+|---|---|---|
+| Unified login and role routing | Implemented | One login routes owner/admin to `/admin/*` and members/coaches to `/portal/*`. |
+| Dashboard | Implemented | KPI cards, alerts, shortcuts, collapsible activity, and Manila-time “today” summaries exist. |
+| Members | Implemented, partly paginated | Enrollment, server-side search/status filtering, paginated directory, detail, classification edits, membership lifecycle, payments, and attendance history exist. Detail histories remain capped. |
+| Membership plans | Implemented | Create, edit, archive, restore, and owner-only permanent deletion rules exist. |
+| Membership lifecycle | Implemented | Activate, renew, pause, resume, cancel, and owner-only date correction exist. More route-level tests are needed. |
+| Attendance | Implemented, incomplete administration | NFC and accountable manual attendance exist for members and coaches. The combined history now has server-side search, date/type/status filters, and pagination; owner correction and export remain pending. |
+| Walk-ins | Implemented | New/return visits and cash payments are atomic, notes are preserved, and the directory has server-side search and pagination. |
+| Cash payments | Accountable ledger implemented | Includes server-side filters/pagination, receipt detail/printing, and owner-only append-only voiding with linked-record resolution. Daily closing reconciliation remains external/undocumented. |
+| Coaches | Implemented | Profile, specialties, availability, account, status, password reset, and attendance exist. Admin cannot inspect a full per-coach attendance history or correct a mistake. |
+| Reports | Implemented, needs export options | 7/30/90-day Manila-time summaries exist, overdue memberships normalize first, and voided payments are excluded. No custom range or export exists. |
+| Settings | Implemented | Fees, structured weekly hours, special dates, status override, an exact server-derived Member Home preview, stations, sessions, and administrator accounts exist. |
+| Audit records | Implemented, needs refinement | Owner-only searchable/date-filtered paginated history includes actor, metadata, target, reasons, Manila timestamps, and filtered CSV export. Friendlier target labels remain incomplete where older metadata contains only an ID. |
+| Announcements | Implemented | Admin draft/publish/archive/delete workflow and scheduled member-facing publication are implemented and audited. |
+| Automated tests | Improved but insufficient | Nineteen unit/security/time-boundary tests pass, but database-backed route tests, frontend tests, and end-to-end workflows are still missing. |
+| Deployment/operations | Partially documented | Health/readiness endpoints and shutdown handling exist. CI, monitoring, backup/restore verification, and incident procedures are absent from the repository. |
 
-Administrators can create and list membership plans, but the following operations are missing:
+## P0 — Complete before using real production data
 
-- Edit a membership plan
-- Disable or archive a plan
-- Renew an existing membership
-- Upgrade or change a member's plan
-- Pause and resume a membership
-- Cancel a membership
-- Correct membership dates
-- View historical memberships
+### 1. Add accountable payment correction and receipt workflows
 
-There is also a status-consistency issue. A membership can remain stored as `ACTIVE` after its expiration date. Some API checks correctly compare the expiration date, but other screens may still display the stored status as active.
+Implementation evidence:
 
-### 3. Fix Gym Operating-Hours Logic
+- Owner-only voiding preserves the original payment and records the actor, reason, timestamp, and linked-record resolution.
+- Cash Payments now has server-side filters, pagination, full receipt detail, and print styling.
+- End-of-day cash closing and database-backed correction tests remain unfinished.
 
-The Admin Settings page currently saves operating hours as plain display text. However, the API calculates automatic open or closed status using hardcoded hours of 6:00 AM to 10:00 PM.
+Required work:
 
-Changing the displayed hours therefore does not change the automatic gym-status calculation.
+- [x] Add owner-authorized payment void/correction with a mandatory reason.
+- [x] Never delete payment records; preserve original amounts, actor, time, and correction link.
+- [x] Reverse or explicitly resolve the related membership/visit effect where appropriate.
+- [x] Add a receipt-detail view containing amount due, cash received, change, notes, collector, and timestamp.
+- [x] Add print/download support for a customer receipt.
+- [ ] Add daily cash closing totals or explicitly document that reconciliation happens outside the system.
+- [ ] Add integration tests proving that corrections cannot silently alter history.
 
-The system needs structured settings for:
+### 2. Fix date, timezone, and expiry consistency
 
-- Opening time
-- Closing time
-- Days of operation
-- Special closures or overrides
-- Time zone
+Implementation evidence:
 
-### 4. Build Coach Management
+- Dashboard, reports, payments, attendance dates, and member monthly summaries now share the Asia/Manila utility.
+- Reports normalize overdue memberships before grouping stored statuses.
+- Boundary coverage includes Manila midnight, month/year rollover, and leap day.
 
-Coach Management is currently a placeholder. The API can only list existing coach records.
+Required work:
 
-It still needs:
+- [x] Use a single Asia/Manila date utility for dashboard, reports, payments, member summaries, and attendance.
+- [x] Normalize overdue memberships before any status summary, or derive effective status without mutating on read.
+- [x] Add boundary tests for midnight, month-end, leap day, and UTC/Manila date differences.
 
-- Create coach
-- Edit coach information
-- Publish or unpublish coach
-- Configure coach availability or schedule
-- Disable or archive coach
-- Search and filter coaches
+### 3. Make configured gym hours authoritative
 
-### 5. Build Reports and Analytics
+Implementation evidence:
 
-Reports and Analytics is currently a placeholder.
+- Settings now store seven structured weekday schedules plus special-date exceptions.
+- Member Home derives both status and displayed hours from that schedule and honors manual overrides.
+- A dedicated in-settings preview is still pending.
 
-Recommended reports include:
+Required work:
 
-- Revenue by date or selected period
-- Membership sales
-- Walk-in revenue
-- Attendance trends
-- Active, expired, and expiring memberships
-- Member growth
-- Popular membership plans
-- Cashier or administrator transaction activity
-- CSV and PDF exports
+- [x] Replace the free-text-only model with structured weekly opening hours.
+- [x] Support closed days and temporary/holiday overrides.
+- [x] Derive `Open now` and displayed hours from the same stored schedule.
+- [x] Add an admin preview showing exactly what members will see.
 
-## Important Operational Improvements
-
-### Payments
+### 4. Add integration coverage for critical transactions
 
-The payment list works, but it still needs:
+Current tests cover helpers and middleware behavior but do not execute complete API workflows against a database.
 
-- Date filters
-- Payment-type filters
-- Transaction and receipt details
-- Amount received and change information
-- Printable or downloadable receipt
-- Owner-controlled payment correction or voiding
-- Required void reason
-- Audit records for corrections and voids
-- Pagination
-- CSV or PDF export
-
-The gym uses over-the-counter payments, so an online payment gateway is not required.
-
-### Walk-ins
-
-Walk-in recording works, but it still needs:
-
-- Searchable returning-guest selection
-- Complete visit history per guest
-- Walk-in profile editing
-- Walk-in-to-member conversion
-- Duplicate-profile detection
-- Daily totals and reports
-- Duplicate-submission protection
-
-### Dashboard
-
-The dashboard is connected to real data. Useful additions include:
-
-- Revenue trends
-- Attendance trends
-- Expiring-members list
-- Pending operational tasks
-- More understandable activity descriptions
-
-Recent activity currently shows generic record or account identifiers instead of useful names.
-
-### Owner Audit Trail
-
-The API saves audit events, but there is no owner-facing audit page.
-
-The owner should be able to review:
-
-- Who changed gym settings
-- Who created or disabled an administrator
-- Who enrolled a member
-- Who received a payment
-- Who changed a membership
-- Who voided or corrected a transaction
-- Date and time of each action
-- The affected record
-
-### Pagination and Search
-
-Several API endpoints currently use fixed limits such as 100 or 200 records. Proper server-side pagination is needed before the database becomes large.
-
-This should be added to:
-
-- Members
-- Payments
-- Attendance
-- Walk-ins
-- Audit logs
-- Reports
-
-### Duplicate and Concurrent Request Protection
-
-The system does not yet have generalized idempotency protection for financial and enrollment operations.
-
-A repeated click, slow connection, browser retry, or concurrent request could create duplicate operations in some flows. Protection is especially important for:
-
-- Member enrollment
-- Membership activation and renewal
-- Walk-in payments
-- Payment corrections
-- NFC card assignment
-
-## Security Status
-
-### Implemented
-
-- Bcrypt password hashing
-- Server-side password pepper
-- Password hashes excluded from normal database queries
-- HTTP-only authentication cookies
-- Secure cookies in production
-- Session expiration
-- Login rate limiting
-- Request-origin verification
-- Custom mutation-request header verification
-- Role-based access restrictions
-- Content Security Policy
-- Security headers through Helmet
-- Server-side validation with Zod
-- Audit records for important actions
-
-### Still Recommended
-
-- Endpoint integration tests for authorization rules
-- Owner-versus-administrator permission tests
-- Account lockout or escalating delays after repeated failed logins
-- Audit-log viewer
-- Backup and recovery procedure
-- Production secret-rotation procedure
-- Production database-access review
-- Monitoring and error alerts
-
-## PWA and Connectivity Notes
-
-- The Admin Web has a valid PWA foundation and service worker.
-- The application shell can be cached, but operational actions still require an internet connection and the live API.
-- Payments and attendance should not be silently queued offline because duplicate or conflicting records could be created.
-- Clear offline and reconnecting messages should be added to important forms.
-- Production updates should be tested to ensure old cached assets are replaced correctly.
-
-## Testing Still Required
-
-The current security utility tests pass, but broader coverage is still needed:
-
-- API endpoint integration tests
-- Database transaction rollback tests
-- OWNER versus ADMIN permission tests
-- Duplicate and concurrent request tests
-- Browser end-to-end tests
-- Responsive layout testing
-- Slow-network testing
-- Offline and reconnection testing
-- Invalid-input testing
-- Production smoke testing
-- Multi-user testing
-
-## Recommended Implementation Order
-
-1. Complete Member Management.
-2. Complete membership renewal, expiration, pause, cancellation, and history.
-3. Fix structured gym hours and automatic open/closed calculation.
-4. Improve walk-in search, history, duplicate detection, and conversion.
-5. Complete payment receipts, filtering, voiding, and exports.
-6. Build Coach Management.
-7. Build Reports and Analytics.
-8. Add an owner-facing audit log.
-9. Add pagination and duplicate-request protection.
-10. Add API integration and browser end-to-end testing.
-11. Finish NFC card and physical reader integration after the hardware arrives.
-
-## Recommended Next Focus
-
-The next implementation phase should be **Member Management and the complete membership lifecycle**.
-
-These are the core operational records used by:
-
-- Payments
-- Attendance
-- NFC cards
-- Reports
-- Dashboard statistics
-- Member accounts
-- Member PWA
-
-Completing this area first will prevent repeated revisions in the other modules.
+Required work:
 
+- [ ] Test enrollment transaction rollback and duplicate submissions.
+- [ ] Test renewal concurrency and prevent accidental double extension/payment.
+- [ ] Test pause/resume/cancel authorization and state transitions.
+- [ ] Test walk-in uniqueness and payment atomicity.
+- [ ] Test member and coach attendance permissions and duplicate handling.
+- [ ] Test OWNER versus ADMIN permissions for every sensitive route.
+- [ ] Test login, forced-password change, session revocation, and disabled accounts.
+- [ ] Add at least one browser-level smoke test covering login → enrollment → payment → attendance.
+
+### 5. Establish backup, restore, and production monitoring
+
+The repository has health/readiness endpoints, but no verifiable operational recovery plan.
+
+- [ ] Confirm automated MongoDB backups and retention.
+- [ ] Perform and document a restore drill using a non-production database.
+- [ ] Add structured request/error logging with secret and personal-data redaction.
+- [ ] Add uptime/error alerts for the API and database connectivity.
+- [ ] Document owner account recovery and secret rotation.
+
+## P1 — Finish before calling the admin system feature-complete
+
+### 6. Build a full audit-log screen
+
+Audit records already exist, but the UI exposes only eight recent records with raw target identifiers.
+
+- [x] Add an owner-facing Audit Log page.
+- [ ] Show actor name, readable action, target name/reference, reason, metadata, and Manila timestamp.
+- [ ] Filter by actor, action, target type, and date range.
+- [x] Paginate results and support CSV export.
+- [x] Keep audit entries append-only.
+
+### 7. Add server-side pagination, filtering, and sorting
+
+Remaining fixed limits:
+
+- member payments/attendance: 100 each;
+- portal attendance: 100;
+- coach attendance: 30;
+- attendance combines limited member and coach queries.
+
+The primary member directory and payment ledger now return page metadata and use server-side pagination. Other growing collections and search selectors still need migration.
+
+Consequences include incomplete lists and an incomplete manual-attendance member selector after the gym grows.
+
+- [ ] Add cursor or page-based pagination to all growing collections.
+- [ ] Return total/result metadata.
+- [ ] Add server-side filters for status, date, person type, plan, and payment type.
+- [ ] Update selectors to search the API instead of loading the first 100 members.
+- [ ] Avoid returning an unbounded NFC-card collection.
+
+### 8. Complete payment and report usability
+
+- [x] Add payment search by reference or payer.
+- [x] Add date and payment-type filters.
+- [x] Show collector, cash received, change, and notes in payment details.
+- [ ] Add custom report ranges and CSV/PDF export.
+- [x] Rename “Revenue” to “Cash collected” unless expenses, refunds, and accrual rules are added.
+- [x] Clearly exclude voided payments from every summary.
+
+### 9. Complete attendance administration
+
+- [x] Add date/person/status filters and pagination.
+- [ ] Add owner-only correction/void for mistaken attendance with a mandatory reason.
+- [x] Add a per-coach attendance history in the admin UI.
+- [x] Require a reason for manual coach check-in/check-out, matching manual member accountability.
+- [ ] Decide whether members record visits only or true check-in/check-out; label the UI consistently.
+- [ ] Add export for payroll or attendance review if coach attendance will be used operationally.
+
+### 10. Complete member data administration
+
+Confirmed gaps:
+
+- API supports changing `memberType` and student verification, but Edit Member does not expose them.
+- `photoUrl` and enrollment-consent fields exist in the model but have no working admin flow.
+- Enrollment audit metadata explicitly says agreements are handled on paper outside the system.
+
+Required decisions/work:
+
+- [x] Allow authorized correction of Regular/Student classification and verification status with audit history.
+- [ ] Decide whether member photos are required; either implement secure storage/capture or remove the unused field.
+- [ ] Decide whether waivers/privacy consent stay on paper or become digital.
+- [ ] If digital, store consent version, timestamps, actor, and an immutable document reference.
+- [ ] Define retention, anonymization, and deletion procedures for personal data.
+
+### 11. Fix confirmed walk-in note loss
+
+Walk-in notes are now submitted with the visit payment and are visible in the payment receipt. A route-level regression test is still needed.
+
+- [x] Send the entered note to the API.
+- [x] Display it in payment/visit details.
+- [ ] Add a regression test.
+
+### 12. Add announcement management before finishing Member Home
+
+The member overview now returns only announcements whose publication window is currently active. Admin supports draft, publish, edit, archive, and owner-only draft deletion.
+
+- [x] Add an Announcement model and admin CRUD/publish/archive workflow.
+- [x] Support publish start/end dates and active/inactive state.
+- [x] Return only currently published announcements to members.
+- [x] Sanitize content and keep publication actions in the audit log.
+
+### 13. Improve expired-session and failure handling
+
+- [x] Redirect to `/login` globally when an API call returns 401.
+- [ ] Handle forced-password and forbidden errors consistently.
+- [x] Add a React error boundary for unexpected rendering failures.
+- [ ] Prevent duplicate financial submissions with server-side idempotency keys, not only disabled buttons.
+- [ ] Add retry guidance without encouraging duplicate payments.
+
+## P2 — Valuable improvements after stabilization
+
+- [ ] Add optional two-factor authentication for owner/admin accounts.
+- [ ] Add a secure self-service recovery policy or clearly retain owner-assisted recovery.
+- [ ] Add granular staff permissions if not every administrator should manage cash, members, plans, and coaches.
+- [ ] Add real-time or periodic refresh for dashboard and attendance screens.
+- [ ] Add accessible modal focus trapping, Escape-to-close, and focus restoration.
+- [ ] Add frontend component tests and accessibility checks.
+- [x] Add CI that runs type checks, tests, and production builds on every change.
+- [ ] Make the Render API rewrite configurable instead of hardcoding one deployment URL.
+- [ ] Define whether coach availability is informational only or will support booking/session scheduling.
+- [ ] Define whether payment methods will remain cash-only or later include GCash/card/bank payments.
+
+## Known NFC workstream
+
+NFC remains a separate project track, but these admin dependencies are still known:
+
+- member-card revoke/replace actions are not exposed from the central NFC table;
+- assigned member portal URLs are one-time readable and require a documented encode-and-test procedure;
+- real R80C and phone-tap hardware acceptance tests are not automated;
+- existing cards must use the unified domain or the old domain must redirect to it.
+
+## Recommended order before Member Web expansion
+
+### Stabilization batch
+
+1. Fix Manila timezone, expiry normalization, and automatic gym hours.
+2. Fix walk-in note submission.
+3. Add payment receipt/detail plus owner-only void/correction.
+4. Add the full audit-log screen.
+5. Add pagination/search contracts for members, attendance, walk-ins, payments, and cards.
+6. Add critical API integration tests and one end-to-end admin workflow.
+
+### Member-contract batch
+
+1. Add structured gym schedule endpoints.
+2. Add announcement management and publication endpoints.
+3. Finalize membership effective-status rules.
+4. Decide photo, consent, personal-data retention, and account recovery scope.
+5. Freeze the member API response shapes before redesigning the member pages.
+
+### Member Web batch
+
+After those contracts are stable, continue with Member Home, Membership, Attendance, Coaches, and Account screens without needing to redesign the backend repeatedly.
+
+## Definition of “admin ready enough to move on”
+
+The admin side is ready for primary focus to move to Member Web when all of the following are true:
+
+- [ ] P0 date/time, payment correction, critical tests, and backup/monitoring items are complete.
+- [x] Audit logs are searchable outside the dashboard preview.
+- [ ] Growing record lists are paginated.
+- [x] Gym schedule and announcements have stable member-facing contracts.
+- [x] Cash receipts and corrections preserve an accountable trail.
+- [ ] One staging test completes enrollment, payment, attendance, renewal, coach attendance, report verification, and account authorization.
+
+## Evidence reviewed
+
+- `Admin Web/src/App.tsx`
+- `Admin Web/src/MemberDetailPage.tsx`
+- `Admin Web/src/SettingsPage.tsx`
+- `Admin Web/src/api.ts`
+- `Admin Web/src/portal/App.tsx`
+- `Admin Web/src/portal/api.ts`
+- `Admin Web/vercel.json`
+- `Api/src/app.ts`
+- `Api/src/config.ts`
+- `Api/src/middleware.ts`
+- `Api/src/models.ts`
+- `Api/src/routes/admin.ts`
+- `Api/src/routes/auth.ts`
+- `Api/src/routes/member.ts`
+- `Api/src/routes/coach.ts`
+- `Api/tests/*.test.ts`

@@ -1,6 +1,6 @@
 # XtrimFitGym 3.0 API
 
-REST API for the Admin and Member PWAs. It uses MongoDB Atlas, cash-only payment records, opaque server-side sessions, custom username/password accounts, and NFC attendance. It does not use Clerk, MySQL, Railway, or the old biometric integration.
+REST API for the unified X-TRIM web app. It uses MongoDB Atlas, cash-only payment records, opaque server-side sessions, custom username/password accounts, and NFC attendance.
 
 ## Local setup
 
@@ -16,14 +16,15 @@ REST API for the Admin and Member PWAs. It uses MongoDB Atlas, cash-only payment
 
    `npm run bootstrap:station -- reception-laptop-01 "Reception laptop"`
 
-7. Put that same station identifier in `Admin Web/.env.local` as `VITE_ATTENDANCE_STATION_ID`, then run `npm run dev`.
+7. Put that same station identifier in `Admin Web/.env.local` as `VITE_ATTENDANCE_STATION_ID`, then run the unified web app.
 
 Never commit `.env.local`, secrets, temporary passwords, or the card portal URL/token.
 
 ## Important operational rules
 
 - There is no public sign-up. The owner is bootstrapped; member accounts are created by the atomic enrollment endpoint.
-- A member receives a temporary password and must replace it before other member endpoints work.
+- All account roles use the same login page and are routed to the authorized portal by role.
+- A member or coach receives a temporary password and must replace it before protected portal endpoints work.
 - Membership activation creates the member, account, membership, and cash-payment record in one MongoDB transaction.
 - Only one active membership and one active card are allowed per member.
 - NFC attendance requires an authenticated admin and a registered station ID. Duplicate scans inside the configured window are rejected.

@@ -1,16 +1,16 @@
-import { FormEvent, ReactNode, useEffect, useState } from 'react';
-import { Link } from 'react-router';
+import { FormEvent, ReactNode, useCallback, useEffect, useState } from 'react';
+import { Link, useSearchParams } from 'react-router';
 import {
-  ArrowLeft, Building2, Check, ChevronRight, CircleUserRound, Eye, EyeOff, KeyRound,
-  Laptop, LogOut, MonitorSmartphone, Plus, Power, RefreshCw, ShieldCheck, UserCog, Users, X,
+  ArrowLeft, Building2, Check, ChevronRight, CircleUserRound, Download, Eye, EyeOff, KeyRound,
+  Laptop, LogOut, MonitorSmartphone, Plus, Power, RefreshCw, ScrollText, Search, ShieldCheck, UserCog, Users, X,
 } from 'lucide-react';
 import {
-  adminApi, authApi, type AdminAccount, type AdminUser, type AttendanceStation,
-  type GymSettings, type SessionInfo,
+  adminApi, authApi, type AdminAccount, type AdminUser, type AttendanceStation, type AuditEntry,
+  type GymPreview, type GymSettings, type SessionInfo,
 } from './api';
-import { PremiumSelect } from './FormControls';
+import { PremiumDatePicker, PremiumSelect, PremiumTimePicker } from './FormControls';
 
-type Tab = 'profile' | 'security' | 'operations' | 'stations' | 'accounts';
+type Tab = 'profile' | 'security' | 'operations' | 'stations' | 'accounts' | 'audit';
 type Notice = { kind: 'success' | 'error'; text: string } | null;
 
 function message(error: unknown, fallback: string) { return error instanceof Error ? error.message : fallback; }
@@ -35,25 +35,86 @@ function ConfirmDialog({ title, children, confirmLabel, danger, busy, onClose, o
 }
 
 export default function SettingsPage({ user, onUserChange }: { user: AdminUser; onUserChange: (user: AdminUser) => void }) {
-  const [tab, setTab] = useState<Tab>('profile');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [tab, setTab] = useState<Tab>(() => user.role === 'OWNER' && searchParams.get('tab') === 'audit' ? 'audit' : 'profile');
+  const chooseTab = (value: Tab) => {
+    setTab(value);
+    setSearchParams(value === 'audit' ? { tab: 'audit' } : {}, { replace: true });
+  };
   const tabs: Array<[Tab, string, ReactNode]> = [
     ['profile', 'My profile', <CircleUserRound />], ['security', 'Security', <ShieldCheck />],
     ['operations', 'Gym operations', <Building2 />], ['stations', 'Attendance stations', <MonitorSmartphone />],
-    ...(user.role === 'OWNER' ? [['accounts', 'Administrator accounts', <Users />] as [Tab, string, ReactNode]] : []),
+    ...(user.role === 'OWNER' ? [
+      ['accounts', 'Administrator accounts', <Users />] as [Tab, string, ReactNode],
+      ['audit', 'Audit log', <ScrollText />] as [Tab, string, ReactNode],
+    ] : []),
   ];
   return <div className="settings-page">
     <Link className="settings-back" to="/dashboard"><ArrowLeft />Back to dashboard</Link>
     <div className="settings-layout">
-      <aside className="settings-nav-panel"><div className="settings-profile-summary"><span className="settings-avatar">{user.firstName[0]}{user.lastName[0]}</span><div><strong>{user.firstName} {user.lastName}</strong><small>{user.role === 'OWNER' ? 'Gym Owner' : 'Administrator'}</small></div></div><nav>{tabs.map(([value, label, icon]) => <button key={value} className={tab === value ? 'active' : ''} onClick={() => setTab(value)}>{icon}<span>{label}</span><ChevronRight /></button>)}</nav></aside>
+      <aside className="settings-nav-panel"><div className="settings-profile-summary"><span className="settings-avatar">{user.firstName[0]}{user.lastName[0]}</span><div><strong>{user.firstName} {user.lastName}</strong><small>{user.role === 'OWNER' ? 'Gym Owner' : 'Administrator'}</small></div></div><nav>{tabs.map(([value, label, icon]) => <button key={value} className={tab === value ? 'active' : ''} onClick={() => chooseTab(value)}>{icon}<span>{label}</span><ChevronRight /></button>)}</nav></aside>
       <section className="settings-content">
         {tab === 'profile' && <ProfileSettings user={user} onUserChange={onUserChange} />}
         {tab === 'security' && <SecuritySettings />}
         {tab === 'operations' && <OperationsSettings />}
         {tab === 'stations' && <StationSettings canManage={user.role === 'OWNER'} />}
         {tab === 'accounts' && user.role === 'OWNER' && <AccountSettings currentUserId={user.id} />}
+        {tab === 'audit' && user.role === 'OWNER' && <AuditSettings />}
       </section>
     </div>
   </div>;
+}
+
+type AuditResult = { page: number; limit: number; total: number; pages: number; items: AuditEntry[] };
+
+function AuditSettings() {
+  const [filters, setFilters] = useState({ search: '', from: '', to: '' });
+  const [submitted, setSubmitted] = useState(filters);
+  const [page, setPage] = useState(1);
+  const [state, setState] = useState<{ data?: AuditResult; loading: boolean; error?: string }>({ loading: true });
+  const [exporting, setExporting] = useState(false);
+  const load = useCallback(() => {
+    setState((current) => ({ ...current, loading: true, error: undefined }));
+    adminApi.auditLog({ ...submitted, page })
+      .then((data) => setState({ data, loading: false }))
+      .catch((error: Error) => setState({ loading: false, error: error.message }));
+  }, [submitted, page]);
+  useEffect(() => { load(); }, [load]);
+  const readable = (value: string) => value.replaceAll('_', ' ').toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase());
+  const targetReference = (entry: AuditEntry) => {
+    const preferred = ['name', 'fullName', 'memberName', 'coachName', 'reference', 'username', 'plan'].map((key) => entry.metadata[key]).find((value) => typeof value === 'string' && value.trim());
+    return typeof preferred === 'string' ? preferred : entry.targetId ?? '—';
+  };
+  const exportCsv = async () => {
+    setExporting(true);
+    try {
+      const first = await adminApi.auditLog({ ...submitted, page: 1, limit: 100 });
+      const entries = [...first.items];
+      for (let exportPage = 2; exportPage <= first.pages; exportPage += 1) entries.push(...(await adminApi.auditLog({ ...submitted, page: exportPage, limit: 100 })).items);
+      const quote = (value: unknown) => `"${String(value ?? '').replaceAll('"', '""')}"`;
+      const rows = [['Timestamp (Manila)', 'Actor', 'Username', 'Action', 'Target type', 'Target reference', 'Reason', 'Metadata'], ...entries.map((entry) => [new Date(entry.occurredAt).toLocaleString('en-PH', { timeZone: 'Asia/Manila' }), entry.actor, entry.actorUsername ?? '', readable(entry.action), entry.targetType, targetReference(entry), typeof entry.metadata.reason === 'string' ? entry.metadata.reason : '', JSON.stringify(entry.metadata)])];
+      const blob = new Blob([`\uFEFF${rows.map((row) => row.map(quote).join(',')).join('\r\n')}`], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `xtrim-audit-${new Date().toISOString().slice(0, 10)}.csv`; link.click(); URL.revokeObjectURL(url);
+    } catch (error) { setState((current) => ({ ...current, error: message(error, 'Could not export the audit log.') })); }
+    finally { setExporting(false); }
+  };
+  return <>
+    <SectionTitle icon={<ScrollText />} title="Audit log" description="Owner-only history of security, cash, membership, and administrative actions." action={<button type="button" className="button secondary" disabled={exporting} onClick={() => void exportCsv()}><Download />{exporting ? 'Exporting…' : 'Export CSV'}</button>} />
+    <form className="audit-filters settings-audit-filters" onSubmit={(event) => { event.preventDefault(); setPage(1); setSubmitted(filters); }}>
+      <label className="search"><Search /><input value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} placeholder="Search action or record ID" /></label>
+      <div className="settings-audit-filter-row">
+        <PremiumDatePicker value={filters.from} onChange={(from) => setFilters({ ...filters, from })} placeholder="From date" />
+        <PremiumDatePicker value={filters.to} onChange={(to) => setFilters({ ...filters, to })} placeholder="To date" />
+        <button className="button secondary">Apply filters</button>
+      </div>
+    </form>
+    <div className="settings-audit-results">
+      {state.loading && !state.data ? <div className="settings-loading"><RefreshCw className="spin" />Loading audit history…</div>
+        : state.error ? <div className="settings-inline-error"><span>{state.error}</span><button type="button" onClick={load}>Try again</button></div>
+          : state.data?.items.length ? <><div className="audit-list">{state.data.items.map((entry) => <article key={entry.id}><span className="audit-marker"><ShieldCheck /></span><div><strong>{readable(entry.action)}</strong><p>{entry.actor}{entry.actorUsername ? ` (@${entry.actorUsername})` : ''}</p>{typeof entry.metadata.reason === 'string' && <p className="audit-reason">Reason: {entry.metadata.reason}</p>}{Object.keys(entry.metadata).length > 0 && <details><summary>View details</summary><pre>{JSON.stringify(entry.metadata, null, 2)}</pre></details>}</div><div><span>{readable(entry.targetType)}</span><code>{targetReference(entry)}</code></div><time>{new Date(entry.occurredAt).toLocaleString('en-PH', { timeZone: 'Asia/Manila' })}</time></article>)}</div><div className="pagination"><span>{state.data.total} records · Page {state.data.page} of {state.data.pages}</span><div><button type="button" className="button secondary" disabled={page <= 1} onClick={() => setPage((value) => value - 1)}>Previous</button><button type="button" className="button secondary" disabled={page >= state.data.pages} onClick={() => setPage((value) => value + 1)}>Next</button></div></div></>
+            : <div className="settings-empty">No audit records match these filters.</div>}
+    </div>
+  </>;
 }
 
 function ProfileSettings({ user, onUserChange }: { user: AdminUser; onUserChange: (user: AdminUser) => void }) {
@@ -76,10 +137,49 @@ function SecuritySettings() {
 
 function OperationsSettings() {
   const [value, setValue] = useState<GymSettings | null>(null); const [notice, setNotice] = useState<Notice>(null); const [loading, setLoading] = useState(true); const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState<GymPreview | null>(null); const [previewing, setPreviewing] = useState(false);
   const load = async () => { setLoading(true); setNotice(null); try { setValue(await adminApi.settings()); } catch (error) { setNotice({ kind: 'error', text: message(error, 'Could not load gym settings.') }); } finally { setLoading(false); } };
   useEffect(() => { void load(); }, []);
   const save = async (event: FormEvent) => { event.preventDefault(); if (!value) return; setBusy(true); setNotice(null); try { setValue(await adminApi.updateSettings(value)); setNotice({ kind: 'success', text: 'Gym operations updated.' }); } catch (error) { setNotice({ kind: 'error', text: message(error, 'Could not save gym settings.') }); } finally { setBusy(false); } };
-  return <><SectionTitle icon={<Building2 />} title="Gym operations" description="Server-controlled fees, availability, and hours used across both portals." />{loading ? <div className="settings-loading"><RefreshCw className="spin" />Loading settings…</div> : value ? <form className="settings-form" onSubmit={save}><div className="settings-form-grid"><label>Default walk-in fee (₱)<input type="number" min="0" step="0.01" placeholder="Enter the standard walk-in fee" inputMode="decimal" value={value.defaultWalkInFee} onChange={(e) => setValue({ ...value, defaultWalkInFee: Number(e.target.value) })} required /></label><label>First membership fee (₱)<input type="number" min="0" step="0.01" placeholder="Enter the one-time membership fee" inputMode="decimal" value={value.firstMembershipFee} onChange={(e) => setValue({ ...value, firstMembershipFee: Number(e.target.value) })} required /><span className="field-hint">Charged once when a member receives their first membership.</span></label><label>Gym status<PremiumSelect value={value.gymStatusOverride} onChange={(next) => setValue({ ...value, gymStatusOverride: next as GymSettings['gymStatusOverride'] })} placeholder="Choose gym status" options={[{value:'AUTO',label:'Automatic'},{value:'OPEN',label:'Open'},{value:'CLOSED',label:'Closed'}]} /></label><label>Hours shown to members<input value={value.hoursToday} onChange={(e) => setValue({ ...value, hoursToday: e.target.value })} required minLength={3} maxLength={100} placeholder="e.g. 6:00 AM – 10:00 PM" /></label></div><Feedback notice={notice} /><div className="settings-actions"><button className="button primary" disabled={busy}>{busy ? 'Saving…' : 'Save operations'}</button></div></form> : <><Feedback notice={notice} /><button className="button secondary" onClick={load}>Try again</button></>}</>;
+  const updateDay = (index: number, patch: Partial<GymSettings['weeklyHours'][number]>) => value && setValue({ ...value, weeklyHours: value.weeklyHours.map((entry, entryIndex) => entryIndex === index ? { ...entry, ...patch } : entry) });
+  const updateException = (index: number, patch: Partial<GymSettings['scheduleExceptions'][number]>) => value && setValue({ ...value, scheduleExceptions: value.scheduleExceptions.map((entry, entryIndex) => entryIndex === index ? { ...entry, ...patch } : entry) });
+  const showPreview = async () => { if (!value) return; setPreviewing(true); setNotice(null); try { setPreview(await adminApi.previewSettings(value)); } catch (error) { setNotice({ kind: 'error', text: message(error, 'Could not generate the member preview.') }); } finally { setPreviewing(false); } };
+  return <>
+    <SectionTitle icon={<Building2 />} title="Gym operations" description="Server-controlled fees and the exact schedule shown across both portals." />
+    {loading ? <div className="settings-loading"><RefreshCw className="spin" />Loading settings…</div> : value ? <form className="settings-form" onSubmit={save}>
+      <div className="settings-form-grid">
+        <label>Default walk-in fee (₱)<input type="number" min="0" step="0.01" inputMode="decimal" value={value.defaultWalkInFee} onChange={(event) => setValue({ ...value, defaultWalkInFee: Number(event.target.value) })} required /></label>
+        <label>First membership fee (₱)<input type="number" min="0" step="0.01" inputMode="decimal" value={value.firstMembershipFee} onChange={(event) => setValue({ ...value, firstMembershipFee: Number(event.target.value) })} required /><span className="field-hint">Charged only on the first membership.</span></label>
+        <label className="settings-full">Gym status override<PremiumSelect value={value.gymStatusOverride} onChange={(next) => setValue({ ...value, gymStatusOverride: next as GymSettings['gymStatusOverride'] })} placeholder="Choose gym status" options={[{ value: 'AUTO', label: 'Automatic — follow schedule' }, { value: 'OPEN', label: 'Force open' }, { value: 'CLOSED', label: 'Force closed' }]} /></label>
+      </div>
+      <section className="settings-schedule">
+        <div className="settings-card-head"><div><h3>Weekly operating hours</h3><p>Member Home uses this schedule to calculate whether the gym is open.</p></div></div>
+        <div className="weekly-hours">{value.weeklyHours.map((entry, index) => <div key={entry.day}>
+          <strong>{entry.day[0]}{entry.day.slice(1).toLowerCase()}</strong>
+          <label className="closed-toggle"><input type="checkbox" checked={entry.isClosed} onChange={(event) => updateDay(index, { isClosed: event.target.checked })} />Closed</label>
+          <PremiumTimePicker label={`${entry.day} opening time`} value={entry.openTime} disabled={entry.isClosed} onChange={(openTime) => updateDay(index, { openTime })} required />
+          <span>to</span>
+          <PremiumTimePicker label={`${entry.day} closing time`} value={entry.closeTime} disabled={entry.isClosed} onChange={(closeTime) => updateDay(index, { closeTime })} required />
+        </div>)}</div>
+      </section>
+      <section className="settings-schedule">
+        <div className="settings-card-head"><div><h3>Special dates</h3><p>Add holidays, closures, or different hours for a specific date.</p></div><button type="button" className="button secondary" onClick={() => setValue({ ...value, scheduleExceptions: [...value.scheduleExceptions, { date: '', label: '', isClosed: true }] })}><Plus />Add date</button></div>
+        <div className="schedule-exceptions">{value.scheduleExceptions.map((entry, index) => <div key={`${entry.date}-${index}`}>
+          <PremiumDatePicker value={entry.date} required placeholder="Choose date" onChange={(date) => updateException(index, { date })} />
+          <input value={entry.label ?? ''} placeholder="Holiday or reason" maxLength={100} onChange={(event) => updateException(index, { label: event.target.value })} />
+          <label className="closed-toggle"><input type="checkbox" checked={entry.isClosed} onChange={(event) => updateException(index, { isClosed: event.target.checked, openTime: entry.openTime ?? '06:00', closeTime: entry.closeTime ?? '22:00' })} />Closed</label>
+          {!entry.isClosed && <><PremiumTimePicker label="Special opening time" value={entry.openTime ?? '06:00'} onChange={(openTime) => updateException(index, { openTime })} required /><PremiumTimePicker label="Special closing time" value={entry.closeTime ?? '22:00'} onChange={(closeTime) => updateException(index, { closeTime })} required /></>}
+          <button type="button" className="button danger compact" onClick={() => setValue({ ...value, scheduleExceptions: value.scheduleExceptions.filter((_, itemIndex) => itemIndex !== index) })}>Remove</button>
+        </div>)}</div>
+      </section>
+      <section className="settings-member-preview">
+        <div className="settings-card-head"><div><h3>Member Home preview</h3><p>Check exactly how today’s gym status and hours will appear to members before saving.</p></div><button type="button" className="button secondary" disabled={previewing} onClick={showPreview}>{previewing ? 'Generating…' : 'Preview member view'}</button></div>
+        {preview && <div className="member-preview-card"><span className={`member-preview-state ${preview.isOpen ? 'open' : ''}`}>{preview.statusLabel}</span><div><small>Gym today</small><strong>{preview.hoursToday}</strong><p>{preview.scheduleSource === 'EXCEPTION' ? 'Special-date schedule' : 'Regular weekly schedule'}</p></div></div>}
+      </section>
+      <Feedback notice={notice} />
+      <div className="settings-actions"><button className="button primary" disabled={busy}>{busy ? 'Saving…' : 'Save operations'}</button></div>
+    </form> : <><Feedback notice={notice} /><button className="button secondary" onClick={load}>Try again</button></>}
+  </>;
 }
 
 function StationSettings({ canManage }: { canManage: boolean }) {

@@ -15,6 +15,7 @@ export async function authenticate(req: Request, _res: Response, next: NextFunct
     req.auth = {
       sessionId: String(session._id), accountId: String(account._id), role: account.role,
       memberId: account.memberId ? String(account.memberId) : null,
+      coachId: account.coachId ? String(account.coachId) : null,
       mustChangePassword: Boolean(account.mustChangePassword), firstName: account.firstName, lastName: account.lastName,
     };
     void AuthSession.updateOne({ _id: session._id }, { $set: { lastSeenAt: new Date() } }).catch(() => undefined);

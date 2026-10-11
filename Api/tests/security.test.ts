@@ -5,9 +5,9 @@ process.env.MONGODB_URI = 'mongodb://127.0.0.1:27017/test';
 process.env.MONGODB_DATABASE = 'test';
 process.env.SESSION_SECRET = 'session-secret-with-at-least-32-characters';
 process.env.PASSWORD_PEPPER = 'password-pepper-with-at-least-32-characters';
-process.env.ALLOWED_ORIGINS = 'http://localhost:3100,http://localhost:3200';
+process.env.ALLOWED_ORIGINS = 'http://localhost:3100';
 process.env.ADMIN_APP_ORIGIN = 'http://localhost:3100';
-process.env.MEMBER_APP_ORIGIN = 'http://localhost:3200';
+process.env.MEMBER_APP_ORIGIN = 'http://localhost:3100';
 
 const security = await import('../src/security.js');
 const { verifyMutationOrigin } = await import('../src/middleware.js');

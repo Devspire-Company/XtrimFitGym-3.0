@@ -5,10 +5,11 @@ const options = { timestamps: true, versionKey: false } as const;
 const accountSchema = new Schema({
   username: { type: String, required: true, unique: true, lowercase: true, trim: true },
   passwordHash: { type: String, required: true, select: false },
-  role: { type: String, enum: ['OWNER', 'ADMIN', 'MEMBER'], required: true, index: true },
+  role: { type: String, enum: ['OWNER', 'ADMIN', 'MEMBER', 'COACH'], required: true, index: true },
   firstName: { type: String, required: true, trim: true },
   lastName: { type: String, required: true, trim: true },
   memberId: { type: Schema.Types.ObjectId, ref: 'Member', default: null, index: true },
+  coachId: { type: Schema.Types.ObjectId, ref: 'Coach', default: null, index: true },
   mustChangePassword: { type: Boolean, default: false },
   isActive: { type: Boolean, default: true, index: true },
   lastLoginAt: { type: Date, default: null },
@@ -17,7 +18,7 @@ const accountSchema = new Schema({
 const sessionSchema = new Schema({
   tokenHash: { type: String, required: true, unique: true, index: true },
   accountId: { type: Schema.Types.ObjectId, ref: 'Account', required: true, index: true },
-  role: { type: String, enum: ['OWNER', 'ADMIN', 'MEMBER'], required: true },
+  role: { type: String, enum: ['OWNER', 'ADMIN', 'MEMBER', 'COACH'], required: true },
   expiresAt: { type: Date, required: true, index: { expires: 0 } },
   lastSeenAt: { type: Date, required: true, default: Date.now },
   userAgent: { type: String, default: '' },
@@ -58,6 +59,9 @@ const membershipPlanSchema = new Schema({
   eligibility: { type: String, enum: ['ALL', 'STUDENT', 'REGULAR'], default: 'ALL', index: true },
   isPromo: { type: Boolean, default: false },
   isActive: { type: Boolean, default: true, index: true },
+  archivedAt: { type: Date, default: null, index: true },
+  archivedBy: { type: Schema.Types.ObjectId, ref: 'Account', default: null },
+  archiveReason: { type: String, default: null },
 }, options);
 
 const membershipSchema = new Schema({
@@ -95,6 +99,10 @@ const paymentSchema = new Schema({
   change: { type: Number, required: true, min: 0 },
   method: { type: String, enum: ['CASH'], default: 'CASH' },
   status: { type: String, enum: ['COMPLETED', 'VOID'], default: 'COMPLETED', index: true },
+  voidedAt: { type: Date, default: null },
+  voidedBy: { type: Schema.Types.ObjectId, ref: 'Account', default: null },
+  voidReason: { type: String, default: null },
+  relatedRecordAction: { type: String, enum: ['KEPT', 'MEMBERSHIP_CANCELLED', 'VISIT_VOIDED'], default: null },
   receivedBy: { type: Schema.Types.ObjectId, ref: 'Account', required: true },
   receivedAt: { type: Date, required: true, default: Date.now, index: true },
   notes: { type: String, default: '' },
@@ -112,6 +120,17 @@ const nfcCardSchema = new Schema({
 }, options);
 nfcCardSchema.index({ memberId: 1 }, { unique: true, partialFilterExpression: { status: 'ACTIVE' } });
 
+const coachNfcCardSchema = new Schema({
+  uid: { type: String, required: true, unique: true, uppercase: true, trim: true, index: true },
+  coachId: { type: Schema.Types.ObjectId, ref: 'Coach', required: true },
+  status: { type: String, enum: ['ACTIVE', 'REVOKED', 'LOST', 'REPLACED'], default: 'ACTIVE', index: true },
+  assignedBy: { type: Schema.Types.ObjectId, ref: 'Account', required: true },
+  assignedAt: { type: Date, required: true, default: Date.now },
+  revokedAt: { type: Date, default: null },
+  revokeReason: { type: String, default: null },
+}, options);
+coachNfcCardSchema.index({ coachId: 1 }, { unique: true, partialFilterExpression: { status: 'ACTIVE' } });
+
 const stationSchema = new Schema({
   stationId: { type: String, required: true, unique: true, index: true },
   name: { type: String, required: true, trim: true },
@@ -125,10 +144,16 @@ const attendanceSchema = new Schema({
   stationId: { type: String, required: true, index: true },
   status: { type: String, enum: ['ACCEPTED', 'MANUAL'], default: 'ACCEPTED' },
   reason: { type: String, default: null },
+  checkOutReason: { type: String, default: null },
+  attendanceDate: { type: String, default: null },
   recordedAt: { type: Date, required: true, default: Date.now, index: true },
+  checkedOutAt: { type: Date, default: null },
+  checkInMethod: { type: String, enum: ['NFC', 'MANUAL'], default: null },
+  checkOutMethod: { type: String, enum: ['NFC', 'MANUAL'], default: null },
   recordedBy: { type: Schema.Types.ObjectId, ref: 'Account', required: true },
 }, options);
 attendanceSchema.index({ memberId: 1, recordedAt: -1 });
+attendanceSchema.index({ memberId: 1, attendanceDate: 1 }, { unique: true, partialFilterExpression: { attendanceDate: { $type: 'string' } } });
 
 const attendanceLockSchema = new Schema({
   _id: { type: Schema.Types.ObjectId, required: true },
@@ -138,26 +163,59 @@ const attendanceLockSchema = new Schema({
 const walkInProfileSchema = new Schema({
   firstName: { type: String, required: true, trim: true },
   lastName: { type: String, required: true, trim: true },
-  phone: { type: String, default: null, index: true },
+  phone: { type: String, default: null },
   email: { type: String, default: null, lowercase: true, trim: true },
   convertedMemberId: { type: Schema.Types.ObjectId, ref: 'Member', default: null },
   totalVisits: { type: Number, default: 0, min: 0 },
   lastVisitAt: { type: Date, default: null, index: true },
 }, options);
+walkInProfileSchema.index({ phone: 1 }, { unique: true, partialFilterExpression: { phone: { $type: 'string' } } });
 
 const walkInVisitSchema = new Schema({
   profileId: { type: Schema.Types.ObjectId, ref: 'WalkInProfile', required: true, index: true },
   paymentId: { type: Schema.Types.ObjectId, ref: 'Payment', required: true },
   visitedAt: { type: Date, required: true, default: Date.now, index: true },
+  visitDate: { type: String, required: true },
   recordedBy: { type: Schema.Types.ObjectId, ref: 'Account', required: true },
+  status: { type: String, enum: ['ACTIVE', 'VOID'], default: 'ACTIVE', index: true },
+  voidedAt: { type: Date, default: null },
+  voidedBy: { type: Schema.Types.ObjectId, ref: 'Account', default: null },
+  voidReason: { type: String, default: null },
 }, options);
+walkInVisitSchema.index({ profileId: 1, visitDate: 1 }, { unique: true, partialFilterExpression: { visitDate: { $type: 'string' } } });
 
 const coachSchema = new Schema({
+  coachNumber: { type: String },
+  firstName: { type: String, default: null, trim: true },
+  lastName: { type: String, default: null, trim: true },
   fullName: { type: String, required: true, trim: true },
+  phone: { type: String, default: null, trim: true, index: true },
+  email: { type: String, default: null, lowercase: true, trim: true, index: true },
   specialty: { type: String, required: true, trim: true },
   availability: { type: String, required: true, trim: true },
+  specialties: [{ type: String, trim: true }],
+  availabilitySchedule: [{
+    _id: false,
+    day: { type: String, enum: ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'], required: true },
+    startTime: { type: String, required: true, match: /^([01]\d|2[0-3]):[0-5]\d$/ },
+    endTime: { type: String, required: true, match: /^([01]\d|2[0-3]):[0-5]\d$/ },
+  }],
+  status: { type: String, enum: ['ACTIVE', 'INACTIVE'], default: 'ACTIVE', index: true },
   isPublished: { type: Boolean, default: true, index: true },
 }, options);
+coachSchema.index({ coachNumber: 1 }, { unique: true, partialFilterExpression: { coachNumber: { $type: 'string' } } });
+
+const coachAttendanceSchema = new Schema({
+  coachId: { type: Schema.Types.ObjectId, ref: 'Coach', required: true, index: true },
+  attendanceDate: { type: String, required: true },
+  checkedInAt: { type: Date, required: true, default: Date.now },
+  checkedOutAt: { type: Date, default: null },
+  method: { type: String, enum: ['MANUAL', 'NFC'], default: 'MANUAL' },
+  stationId: { type: String, default: null },
+  reason: { type: String, default: null },
+  recordedBy: { type: Schema.Types.ObjectId, ref: 'Account', required: true },
+}, options);
+coachAttendanceSchema.index({ coachId: 1, attendanceDate: 1 }, { unique: true });
 
 const gymSettingsSchema = new Schema({
   key: { type: String, default: 'primary', unique: true },
@@ -165,6 +223,32 @@ const gymSettingsSchema = new Schema({
   firstMembershipFee: { type: Number, default: 100, min: 0 },
   gymStatusOverride: { type: String, enum: ['AUTO', 'OPEN', 'CLOSED'], default: 'AUTO' },
   hoursToday: { type: String, default: 'Contact the gym for today\'s hours.' },
+  weeklyHours: [{
+    _id: false,
+    day: { type: String, enum: ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'], required: true },
+    isClosed: { type: Boolean, default: false },
+    openTime: { type: String, default: '06:00' },
+    closeTime: { type: String, default: '22:00' },
+  }],
+  scheduleExceptions: [{
+    _id: false,
+    date: { type: String, required: true },
+    label: { type: String, default: '' },
+    isClosed: { type: Boolean, default: true },
+    openTime: { type: String, default: null },
+    closeTime: { type: String, default: null },
+  }],
+}, options);
+
+const announcementSchema = new Schema({
+  title: { type: String, required: true, trim: true },
+  message: { type: String, required: true, trim: true },
+  status: { type: String, enum: ['DRAFT', 'PUBLISHED', 'ARCHIVED'], default: 'DRAFT', index: true },
+  publishAt: { type: Date, default: null, index: true },
+  expiresAt: { type: Date, default: null, index: true },
+  createdBy: { type: Schema.Types.ObjectId, ref: 'Account', required: true },
+  updatedBy: { type: Schema.Types.ObjectId, ref: 'Account', required: true },
+  archivedAt: { type: Date, default: null },
 }, options);
 
 const auditLogSchema = new Schema({
@@ -184,14 +268,17 @@ export const Membership = model('Membership', membershipSchema);
 export const MembershipLock = model('MembershipLock', membershipLockSchema);
 export const Payment = model('Payment', paymentSchema);
 export const NfcCard = model('NfcCard', nfcCardSchema);
+export const CoachNfcCard = model('CoachNfcCard', coachNfcCardSchema);
 export const AttendanceStation = model('AttendanceStation', stationSchema);
 export const AttendanceRecord = model('AttendanceRecord', attendanceSchema);
 export const AttendanceLock = model('AttendanceLock', attendanceLockSchema);
 export const WalkInProfile = model('WalkInProfile', walkInProfileSchema);
 export const WalkInVisit = model('WalkInVisit', walkInVisitSchema);
 export const Coach = model('Coach', coachSchema);
+export const CoachAttendance = model('CoachAttendance', coachAttendanceSchema);
 export const GymSettings = model('GymSettings', gymSettingsSchema);
+export const Announcement = model('Announcement', announcementSchema);
 export const AuditLog = model('AuditLog', auditLogSchema);
 
-export type AccountRole = 'OWNER' | 'ADMIN' | 'MEMBER';
+export type AccountRole = 'OWNER' | 'ADMIN' | 'MEMBER' | 'COACH';
 export type ObjectId = mongoose.Types.ObjectId;

@@ -8,6 +8,7 @@ declare global {
         accountId: string;
         role: AccountRole;
         memberId: string | null;
+        coachId: string | null;
         mustChangePassword: boolean;
         firstName: string;
         lastName: string;
@@ -17,4 +18,3 @@ declare global {
 }
 
 export {};
-

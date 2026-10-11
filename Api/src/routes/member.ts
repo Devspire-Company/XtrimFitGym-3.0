@@ -1,10 +1,11 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { AttendanceRecord, AuthSession, Coach, GymSettings, Membership, NfcCard, Account } from '../models.js';
+import { Announcement, AttendanceRecord, AuthSession, Coach, GymSettings, Membership, NfcCard, Account } from '../models.js';
 import { asyncRoute, HttpError } from '../http.js';
 import { requireAuth, requireReadyAccount, requireRoles } from '../middleware.js';
 import { hashPassword, portalTokenHash, verifyPassword } from '../security.js';
 import { audit } from '../audit.js';
+import { manilaMonthBounds, resolveGymAvailability } from '../manila-time.js';
 
 export const memberRouter = Router();
 
@@ -19,31 +20,29 @@ memberRouter.use(requireAuth, requireRoles('MEMBER'), requireReadyAccount);
 
 memberRouter.get('/overview', asyncRoute(async (req, res) => {
   const now = new Date();
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-  const [membership, card, settings, totalVisits, visitsThisMonth, last] = await Promise.all([
+  const month = manilaMonthBounds(now);
+  const [membership, card, settings, totalVisits, visitsThisMonth, last, announcements] = await Promise.all([
     Membership.findOne({ memberId: req.auth!.memberId }).sort({ startsAt: -1 }).lean<any>(),
     NfcCard.findOne({ memberId: req.auth!.memberId, status: 'ACTIVE' }).lean<any>(),
     GymSettings.findOne({ key: 'primary' }).lean<any>(),
     AttendanceRecord.countDocuments({ memberId: req.auth!.memberId }),
-    AttendanceRecord.countDocuments({ memberId: req.auth!.memberId, recordedAt: { $gte: monthStart } }),
+    AttendanceRecord.countDocuments({ memberId: req.auth!.memberId, recordedAt: { $gte: month.start, $lt: month.end } }),
     AttendanceRecord.findOne({ memberId: req.auth!.memberId }).sort({ recordedAt: -1 }).lean<any>(),
+    Announcement.find({ status: 'PUBLISHED', publishAt: { $lte: now }, $or: [{ expiresAt: null }, { expiresAt: { $gt: now } }] }).sort({ publishAt: -1 }).limit(10).lean<any[]>(),
   ]);
-  const override = settings?.gymStatusOverride ?? 'AUTO';
-  const currentHour = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Manila', hour: '2-digit', hour12: false }).format(now));
-  const autoOpen = currentHour >= 6 && currentHour < 22;
-  const isOpen = override === 'OPEN' || (override === 'AUTO' && autoOpen);
+  const gym = resolveGymAvailability(settings ?? {}, now);
   res.json({
     membership: membership ? { plan: membership.planName, status: membership.status, startedAt: membership.startsAt, expiresAt: membership.expiresAt } : null,
     card: card ? { status: card.status } : null,
-    gym: { isOpen, statusLabel: isOpen ? 'Open now' : 'Closed', hoursToday: settings?.hoursToday ?? '6:00 AM – 10:00 PM' },
+    gym,
     attendanceSummary: { totalVisits, visitsThisMonth, lastVisitAt: last?.recordedAt },
-    announcements: [],
+    announcements: announcements.map((row) => ({ id: String(row._id), title: row.title, message: row.message, publishedAt: row.publishAt })),
   });
 }));
 
 memberRouter.get('/attendance', asyncRoute(async (req, res) => {
   const rows = await AttendanceRecord.find({ memberId: req.auth!.memberId }).sort({ recordedAt: -1 }).limit(100).lean<any[]>();
-  res.json({ items: rows.map((row) => ({ id: String(row._id), recordedAt: row.recordedAt, status: row.status, station: row.stationId })) });
+  res.json({ items: rows.map((row) => ({ id: String(row._id), recordedAt: row.recordedAt, checkedOutAt: row.checkedOutAt ?? undefined, status: !row.attendanceDate ? 'VISIT RECORDED' : row.checkedOutAt ? 'CHECKED OUT' : 'CHECKED IN', station: row.stationId })) });
 }));
 
 memberRouter.get('/coaches', asyncRoute(async (_req, res) => {

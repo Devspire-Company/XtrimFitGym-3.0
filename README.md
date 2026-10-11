@@ -1,12 +1,15 @@
 # XtrimFitGym 3.0
 
-XtrimFitGym 3.0 replaces the biometric/Clerk prototype with one connected system:
+XtrimFitGym is one connected gym-management system with two deployable services:
 
-- `Admin Web` — installable Admin PWA for membership enrollment, cash payments, NFC cards, attendance, walk-ins, plans, and gym settings.
-- `Member Web` — installable Member PWA for membership status, personal attendance, coaches, gym status, and password management.
-- `Api` — Node/Express REST API with MongoDB Atlas, custom accounts, secure server-side sessions, authorization, transactions, and audit records.
+- `Admin Web` — the unified Vercel web app for owners, administrators, members, and coaches.
+- `Api` — the Express/MongoDB API for accounts, memberships, payments, NFC attendance, coach operations, and audit records.
 
-No Clerk, MySQL, Railway, mobile APK, or biometric device is required by 3.0.
+The web app uses one sign-in page and routes authenticated users by role:
+
+- `/admin/*` — owner and administrator operations.
+- `/portal/*` — member and coach self-service.
+- `/c/:token` — secure member NFC entry.
 
 ## Local setup
 
@@ -15,38 +18,27 @@ cd "C:\Users\Asus\Desktop\XtrimFitGym\XtrimFitGym 3.0"
 npm.cmd run install:all
 Copy-Item "Api\.env.example" "Api\.env.local"
 Copy-Item "Admin Web\.env.example" "Admin Web\.env.local"
-Copy-Item "Member Web\.env.example" "Member Web\.env.local"
 ```
 
-Complete `Api/.env.local` with the new MongoDB Atlas connection and random secrets. Then open three PowerShell terminals:
+Set the API secrets and MongoDB connection, then run two terminals:
 
 ```powershell
 npm.cmd run dev:api
-npm.cmd run dev:admin
-npm.cmd run dev:member
+npm.cmd run dev:web
 ```
 
 - API: `http://localhost:4000`
-- Admin PWA: `http://localhost:3100`
-- Member PWA: `http://localhost:3200`
+- Unified web app: `http://localhost:3100`
+- Login: `http://localhost:3100/login`
 
-Before the first sign-in, create the owner and reception station exactly once. See `Api/README.md`.
+Before first use, bootstrap the owner and register the reception attendance station. See `Api/README.md`.
 
-## Verified commands
+## Deployment
 
-```powershell
-npm.cmd run typecheck
-npm.cmd test
-npm.cmd run build
-```
+1. Deploy `Api` to Render.
+2. Deploy `Admin Web` as the single Vercel project.
+3. Set `ADMIN_APP_ORIGIN`, `MEMBER_APP_ORIGIN`, and `ALLOWED_ORIGINS` to the same Vercel origin.
+4. Point the web app's `/api/*` rewrite to the Render API.
+5. Test every role, forced password changes, NFC entry, attendance, enrollment, and account authorization.
 
-## Deployment order
-
-1. Create/configure the new MongoDB Atlas database.
-2. Create a **new** Render Web Service with root directory `Api`.
-3. Bootstrap the first owner and reception station against the production database.
-4. Create separate Vercel projects with root directories `Admin Web` and `Member Web`.
-5. Configure exact production origins in Render and the new API URL in both Vercel projects.
-6. Test login, forced password change, plan creation, enrollment/payment, card assignment, attendance, duplicate scan rejection, walk-in payment, and member history before real use.
-
-Do not connect 3.0 to the old 2.0 database or old Render API. Do not commit `.env.local`, session secrets, database credentials, temporary passwords, or NFC portal URLs.
+Do not commit `.env.local`, secrets, temporary credentials, or NFC portal URLs.

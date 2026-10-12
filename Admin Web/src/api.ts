@@ -35,7 +35,7 @@ export type AttendanceStation = { id: string; stationId: string; name: string; i
 export type AdminAccount = { id: string; username: string; firstName: string; lastName: string; role: 'ADMIN' | 'OWNER'; isActive: boolean; lastLoginAt?: string; createdAt: string };
 export type AdminNotification = {
   id: string;
-  type: 'MEMBERSHIP_EXPIRING' | 'CARD_REQUIRED' | 'PAYMENT_VOIDED' | 'SECURITY';
+  type: 'MEMBERSHIP_EXPIRING' | 'CARD_REQUIRED' | 'PAYMENT_VOIDED' | 'SECURITY' | 'MEMBER_REQUEST';
   tone: 'INFO' | 'ACTION' | 'WARNING';
   title: string;
   message: string;
@@ -78,7 +78,7 @@ export type Plan = { _id: string; name: string; price: number; durationDays: num
 export type Weekday = 'SUNDAY' | 'MONDAY' | 'TUESDAY' | 'WEDNESDAY' | 'THURSDAY' | 'FRIDAY' | 'SATURDAY';
 export type WeeklyHours = { day: Weekday; isClosed: boolean; openTime: string; closeTime: string };
 export type ScheduleException = { date: string; label?: string; isClosed: boolean; openTime?: string; closeTime?: string };
-export type GymSettings = { defaultWalkInFee: number; firstMembershipFee: number; announcementsEnabled: boolean; gymStatusOverride: 'AUTO' | 'OPEN' | 'CLOSED'; hoursToday?: string; weeklyHours: WeeklyHours[]; scheduleExceptions: ScheduleException[] };
+export type GymSettings = { gymAddress: string; defaultWalkInFee: number; firstMembershipFee: number; announcementsEnabled: boolean; gymStatusOverride: 'AUTO' | 'OPEN' | 'CLOSED'; hoursToday?: string; weeklyHours: WeeklyHours[]; scheduleExceptions: ScheduleException[] };
 export type GymPreview = { isOpen: boolean; statusLabel: string; hoursToday: string; scheduleSource: 'WEEKLY' | 'EXCEPTION' };
 export type Announcement = { id: string; title: string; message: string; status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED'; publishAt?: string; expiresAt?: string; createdAt: string; updatedAt: string };
 export type PaymentItem = { id: string; reference: string; payerName: string; amount: number; type: string; status: 'COMPLETED' | 'VOID'; receivedAt: string };
@@ -91,6 +91,7 @@ export type CoachAvailability = { day: CoachDay; startTime: string; endTime: str
 export type Coach = { id: string; coachNumber: string; firstName: string; lastName: string; fullName: string; phone: string; email: string; specialty: string; specialties: string[]; availability: string; availabilitySchedule: CoachAvailability[]; status: 'ACTIVE' | 'INACTIVE'; isPublished: boolean; account?: { id: string; username: string; isActive: boolean; mustChangePassword: boolean; lastLoginAt?: string }; attendanceToday?: { id: string; checkedInAt: string; checkedOutAt?: string }; nfcCard?: { id: string; uid: string; status: string; assignedAt: string } };
 export type EmergencyContact = { name: string; relationship: string; phone: string };
 export type MembershipRecord = { id: string; planId: string; planName: string; pricePaid: number; startsAt: string; expiresAt: string; status: 'ACTIVE' | 'PAUSED' | 'CANCELLED' | 'EXPIRED'; pausedAt?: string; remainingMillisecondsAtPause?: number; statusReason?: string; createdAt: string };
+export type MemberServiceRequest = { id: string; type: 'RENEWAL' | 'PROFILE_CORRECTION' | 'NFC_LOST'; status: 'OPEN' | 'RESOLVED' | 'CANCELLED'; message: string; requestedChanges?: Record<string, unknown>; resolutionNote?: string; createdAt: string; resolvedAt?: string };
 export type MemberDetail = {
   member: { id: string; memberNumber: string; firstName: string; lastName: string; phone: string; email: string; birthDate?: string; emergencyContact?: EmergencyContact; memberType: MemberType; studentIdVerified: boolean; status: 'ACTIVE' | 'DISABLED'; sourceWalkInProfileId?: string; createdAt: string };
   account?: { id: string; username: string; isActive: boolean; mustChangePassword: boolean; lastLoginAt?: string };
@@ -98,6 +99,7 @@ export type MemberDetail = {
   payments: Array<{ id: string; reference: string; type: string; amountDue: number; planAmount: number; membershipFee: number; amountReceived: number; change: number; status: string; notes: string; receivedAt: string }>;
   attendance: Array<{ id: string; status: string; stationId: string; recordedAt: string; checkedOutAt?: string }>;
   cards: Array<{ id: string; uid: string; status: string; assignedAt: string; revokedAt?: string; revokeReason?: string }>;
+  requests: MemberServiceRequest[];
 };
 
 export const authApi = {
@@ -131,6 +133,7 @@ export const adminApi = {
   renewMembership: (memberId: string, input: { planId: string; amountReceived: number; notes?: string }) => api<{ membership: MembershipRecord; paymentReference: string; change: number }>(`/admin/members/${memberId}/memberships/renew`, { method: 'POST', body: JSON.stringify(input) }),
   membershipAction: (memberId: string, membershipId: string, action: 'pause' | 'resume' | 'cancel', reason: string) => api<MembershipRecord>(`/admin/members/${memberId}/memberships/${membershipId}/${action}`, { method: 'POST', body: JSON.stringify({ reason }) }),
   correctMembershipDates: (memberId: string, membershipId: string, input: { startsAt: string; expiresAt: string; reason: string }) => api<MembershipRecord>(`/admin/members/${memberId}/memberships/${membershipId}/dates`, { method: 'PUT', body: JSON.stringify(input) }),
+  resolveMemberRequest: (memberId: string, requestId: string, decision: 'APPROVE' | 'DECLINE', note: string) => api<{ id: string; status: string; resolutionNote: string }>(`/admin/members/${memberId}/requests/${requestId}/resolve`, { method: 'POST', body: JSON.stringify({ decision, note }) }),
   attendance: (input: { page?: number; limit?: number; search?: string; personType?: string; status?: string; from?: string; to?: string } = {}) => { const query = new URLSearchParams(); Object.entries(input).forEach(([key, value]) => { if (value !== undefined && value !== '') query.set(key, String(value)); }); return api<{ page: number; limit: number; total: number; pages: number; items: AttendanceRecord[] }>(`/admin/attendance?${query}`); },
   recordAttendance: (cardUid: string) => {
     if (!ATTENDANCE_STATION_ID) throw new ApiError(400, 'This browser is not configured as an attendance station.');

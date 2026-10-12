@@ -3,7 +3,7 @@ import mongoose from 'mongoose';
 import { z } from 'zod';
 import {
   Account, Announcement, AttendanceLock, AttendanceRecord, AttendanceStation, AuditLog, AuthSession, CashClosing, Coach, CoachAttendance, CoachNfcCard, GymSettings,
-  Member, Membership, MembershipLock, MembershipPlan, NfcCard, Notification, Payment, WalkInProfile, WalkInVisit,
+  Member, MemberRequest, Membership, MembershipLock, MembershipPlan, NfcCard, Notification, Payment, WalkInProfile, WalkInVisit,
 } from '../models.js';
 import { audit } from '../audit.js';
 import { config } from '../config.js';
@@ -13,7 +13,7 @@ import { membershipPricing, planIsEligible, type MemberType, type PlanEligibilit
 import { requireReadyAccount, requireRoles } from '../middleware.js';
 import { addDays, hashPassword, memberNumber, normalizeCardUid, normalizeUsername, portalTokenHash, randomToken, reference, temporaryPassword } from '../security.js';
 import { DAY_MILLISECONDS, DEFAULT_WEEKLY_HOURS, WEEKDAYS, manilaDateKey, manilaDayBounds, manilaMonthBounds, manilaWeekBounds, resolveGymAvailability } from '../manila-time.js';
-import { createNotification, notifyOwners, syncOperationalNotifications } from '../notifications.js';
+import { createNotification, notifyMember, notifyOwners, syncOperationalNotifications } from '../notifications.js';
 import { calculateCashClosing, cashCollectionSummary, lockCashDay, lockOpenCashDay } from '../cash-closing.js';
 
 export const adminRouter = Router();
@@ -260,13 +260,14 @@ adminRouter.get('/members', asyncRoute(async (req, res) => {
 adminRouter.get('/members/:memberId', asyncRoute(async (req, res) => {
   const memberId = id.parse(req.params.memberId);
   await expireDueMemberships(memberId);
-  const [member, account, memberships, payments, attendance, cards] = await Promise.all([
+  const [member, account, memberships, payments, attendance, cards, requests] = await Promise.all([
     Member.findById(memberId).lean<any>(),
     Account.findOne({ memberId }).lean<any>(),
     Membership.find({ memberId }).sort({ startsAt: -1, createdAt: -1 }).lean<any[]>(),
     Payment.find({ memberId }).sort({ receivedAt: -1 }).limit(100).lean<any[]>(),
     AttendanceRecord.find({ memberId }).sort({ recordedAt: -1 }).limit(100).lean<any[]>(),
     NfcCard.find({ memberId }).sort({ assignedAt: -1 }).lean<any[]>(),
+    MemberRequest.find({ memberId }).sort({ createdAt: -1 }).limit(50).lean<any[]>(),
   ]);
   if (!member) throw new HttpError(404, 'Member not found.');
   res.json({
@@ -282,7 +283,35 @@ adminRouter.get('/members/:memberId', asyncRoute(async (req, res) => {
     payments: payments.map((row) => ({ id: String(row._id), reference: row.reference, type: row.type, amountDue: row.amountDue, planAmount: row.planAmount ?? row.amountDue, membershipFee: row.membershipFee ?? 0, amountReceived: row.amountReceived, change: row.change, status: row.status, notes: row.notes, receivedAt: row.receivedAt })),
     attendance: attendance.map((row) => ({ id: String(row._id), status: !row.attendanceDate ? 'VISIT RECORDED' : row.checkedOutAt ? 'CHECKED OUT' : 'CHECKED IN', stationId: row.stationId, recordedAt: row.recordedAt, checkedOutAt: row.checkedOutAt ?? undefined })),
     cards: cards.map((row) => ({ id: String(row._id), uid: row.uid, status: row.status, assignedAt: row.assignedAt, revokedAt: row.revokedAt ?? undefined, revokeReason: row.revokeReason ?? undefined })),
+    requests: requests.map((row) => ({ id: String(row._id), type: row.type, status: row.status, message: row.message, requestedChanges: row.requestedChanges ?? undefined, resolutionNote: row.resolutionNote ?? undefined, createdAt: row.createdAt, resolvedAt: row.resolvedAt ?? undefined })),
   });
+}));
+
+adminRouter.post('/members/:memberId/requests/:requestId/resolve', asyncRoute(async (req, res) => {
+  const memberId = id.parse(req.params.memberId); const requestId = id.parse(req.params.requestId);
+  const input = z.object({ decision: z.enum(['APPROVE', 'DECLINE']), note: z.string().trim().min(5).max(500) }).parse(req.body);
+  const session = await mongoose.startSession(); let output: any;
+  try { await session.withTransaction(async () => {
+    const request = await MemberRequest.findOne({ _id: requestId, memberId, status: 'OPEN' }).session(session);
+    if (!request) throw new HttpError(409, 'This member request is no longer open.');
+    if (request.type === 'PROFILE_CORRECTION' && input.decision === 'APPROVE') {
+      const changes = request.requestedChanges as any;
+      const update: Record<string, unknown> = {};
+      if (changes?.phone !== undefined) update.phone = changes.phone || null;
+      if (changes?.email !== undefined) update.email = changes.email?.toLowerCase() || null;
+      if (changes?.emergencyContact) update.emergencyContact = changes.emergencyContact;
+      const duplicateValues: Record<string, unknown>[] = [];
+      if (update.phone) duplicateValues.push({ phone: update.phone });
+      if (update.email) duplicateValues.push({ email: update.email });
+      if (duplicateValues.length && await Member.exists({ _id: { $ne: memberId }, $or: duplicateValues }).session(session)) throw new HttpError(409, 'Another member already uses the requested phone number or email address.');
+      if (Object.keys(update).length) await Member.updateOne({ _id: memberId }, { $set: update }, { session });
+    }
+    request.status = input.decision === 'APPROVE' ? 'RESOLVED' : 'CANCELLED'; request.resolvedAt = new Date(); request.resolvedBy = new mongoose.Types.ObjectId(req.auth!.accountId); request.resolutionNote = input.note; await request.save({ session });
+    await audit(req.auth!.accountId, input.decision === 'APPROVE' ? 'MEMBER_REQUEST_RESOLVED' : 'MEMBER_REQUEST_DECLINED', 'MemberRequest', requestId, { memberId, type: request.type, note: input.note }, session);
+    await notifyMember(memberId, { type: 'MEMBER_REQUEST', tone: input.decision === 'APPROVE' ? 'INFO' : 'WARNING', dedupeKey: `member-request-result:${requestId}`, sourceId: requestId, title: input.decision === 'APPROVE' ? 'Your request was completed' : 'Your request needs follow-up', message: input.note, actionUrl: request.type === 'PROFILE_CORRECTION' ? '/portal/account' : '/portal/membership' }, session);
+    output = { id: requestId, status: request.status, resolutionNote: input.note };
+  }); } finally { await session.endSession(); }
+  res.json(output);
 }));
 
 adminRouter.put('/members/:memberId', asyncRoute(async (req, res) => {
@@ -302,6 +331,7 @@ adminRouter.put('/members/:memberId', asyncRoute(async (req, res) => {
       if (!member) throw new HttpError(404, 'Member not found.');
       await Account.updateOne({ memberId }, { firstName: input.firstName, lastName: input.lastName }, { session });
       await audit(req.auth!.accountId, 'MEMBER_PROFILE_UPDATED', 'Member', memberId, input.memberType ? { memberType: input.memberType, studentIdVerified: input.studentIdVerified } : {}, session);
+      await notifyMember(memberId, { type: 'MEMBER_REQUEST', tone: 'INFO', dedupeKey: `member-profile-updated:${memberId}:${new Date().toISOString()}`, sourceId: memberId, title: 'Your member profile was updated', message: 'Reception updated the personal information on your member record.', actionUrl: '/portal/account' }, session);
     });
   } finally { await session.endSession(); }
   res.json({ id: String(member._id), firstName: member.firstName, lastName: member.lastName });
@@ -367,6 +397,8 @@ adminRouter.post('/members/:memberId/memberships/renew', asyncRoute(async (req, 
       const paymentReference = reference('PAY');
       await Payment.create([{ reference: paymentReference, memberId, membershipId: membership._id, type: 'MEMBERSHIP', amountDue: pricing.totalDue, planAmount: pricing.planAmount, membershipFee: pricing.membershipFee, amountReceived: input.amountReceived, change: input.amountReceived - pricing.totalDue, receivedBy: req.auth!.accountId, notes: input.notes ?? 'Membership renewal' }], { session });
       await audit(req.auth!.accountId, 'MEMBERSHIP_RENEWED', 'Membership', String(membership._id), { plan: plan.name, paymentReference, ...pricing }, session);
+      await MemberRequest.updateMany({ memberId, type: 'RENEWAL', status: 'OPEN' }, { $set: { status: 'RESOLVED', resolvedAt: new Date(), resolvedBy: req.auth!.accountId, resolutionNote: `Renewed under payment ${paymentReference}.` } }, { session });
+      await notifyMember(memberId, { type: 'MEMBERSHIP_UPDATE', tone: 'INFO', dedupeKey: `membership-renewed:${membership._id}:${paymentReference}`, sourceId: String(membership._id), title: 'Your membership was renewed', message: `${plan.name} is valid until ${new Date(membership.expiresAt).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'Asia/Manila' })}. Receipt ${paymentReference} is ready.`, actionUrl: '/portal/membership' }, session);
       output = { membership: membershipResponse(membership), paymentReference, change: input.amountReceived - pricing.totalDue, ...pricing };
     });
   } finally { await session.endSession(); }
@@ -378,7 +410,9 @@ adminRouter.post('/members/:memberId/memberships/:membershipId/pause', asyncRout
   const row = await Membership.findOne({ _id: membershipId, memberId, status: 'ACTIVE', expiresAt: { $gt: now } });
   if (!row) throw new HttpError(409, 'Only a current active membership can be paused.');
   row.status = 'PAUSED'; row.pausedAt = now; row.remainingMillisecondsAtPause = calculatePausedTime(row.expiresAt, now); row.statusChangedAt = now; row.statusChangedBy = new mongoose.Types.ObjectId(req.auth!.accountId); row.statusReason = reason; await row.save();
-  await audit(req.auth!.accountId, 'MEMBERSHIP_PAUSED', 'Membership', membershipId, { memberId, reason }); res.json(membershipResponse(row));
+  await audit(req.auth!.accountId, 'MEMBERSHIP_PAUSED', 'Membership', membershipId, { memberId, reason });
+  await notifyMember(memberId, { type: 'MEMBERSHIP_UPDATE', tone: 'WARNING', dedupeKey: `membership-paused:${membershipId}:${now.toISOString()}`, sourceId: membershipId, title: 'Your membership was paused', message: reason, actionUrl: '/portal/membership' });
+  res.json(membershipResponse(row));
 }));
 
 adminRouter.post('/members/:memberId/memberships/:membershipId/resume', asyncRoute(async (req, res) => {
@@ -387,7 +421,9 @@ adminRouter.post('/members/:memberId/memberships/:membershipId/resume', asyncRou
   if (!row) throw new HttpError(409, 'Only a paused membership can be resumed.');
   if (await Membership.exists({ memberId, status: 'ACTIVE', _id: { $ne: row._id } })) throw new HttpError(409, 'This member already has another active membership.');
   row.status = 'ACTIVE'; row.expiresAt = calculateResumedExpiry(now, row.remainingMillisecondsAtPause ?? 0); row.pausedAt = null; row.remainingMillisecondsAtPause = null; row.statusChangedAt = now; row.statusChangedBy = new mongoose.Types.ObjectId(req.auth!.accountId); row.statusReason = reason; await row.save();
-  await audit(req.auth!.accountId, 'MEMBERSHIP_RESUMED', 'Membership', membershipId, { memberId, reason }); res.json(membershipResponse(row));
+  await audit(req.auth!.accountId, 'MEMBERSHIP_RESUMED', 'Membership', membershipId, { memberId, reason });
+  await notifyMember(memberId, { type: 'MEMBERSHIP_UPDATE', tone: 'INFO', dedupeKey: `membership-resumed:${membershipId}:${now.toISOString()}`, sourceId: membershipId, title: 'Your membership is active again', message: `Your updated expiry is ${new Date(row.expiresAt).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'Asia/Manila' })}.`, actionUrl: '/portal/membership' });
+  res.json(membershipResponse(row));
 }));
 
 adminRouter.post('/members/:memberId/memberships/:membershipId/cancel', asyncRoute(async (req, res) => {
@@ -395,7 +431,9 @@ adminRouter.post('/members/:memberId/memberships/:membershipId/cancel', asyncRou
   const row = await Membership.findOne({ _id: membershipId, memberId, status: { $in: ['ACTIVE', 'PAUSED'] } });
   if (!row) throw new HttpError(409, 'Only an active or paused membership can be cancelled.');
   row.status = 'CANCELLED'; row.pausedAt = null; row.remainingMillisecondsAtPause = null; row.statusChangedAt = now; row.statusChangedBy = new mongoose.Types.ObjectId(req.auth!.accountId); row.statusReason = reason; await row.save();
-  await audit(req.auth!.accountId, 'MEMBERSHIP_CANCELLED', 'Membership', membershipId, { memberId, reason }); res.json(membershipResponse(row));
+  await audit(req.auth!.accountId, 'MEMBERSHIP_CANCELLED', 'Membership', membershipId, { memberId, reason });
+  await notifyMember(memberId, { type: 'MEMBERSHIP_UPDATE', tone: 'WARNING', dedupeKey: `membership-cancelled:${membershipId}:${now.toISOString()}`, sourceId: membershipId, title: 'Your membership was cancelled', message: reason, actionUrl: '/portal/membership' });
+  res.json(membershipResponse(row));
 }));
 
 adminRouter.put('/members/:memberId/memberships/:membershipId/dates', requireRoles('OWNER'), asyncRoute(async (req, res) => {
@@ -404,7 +442,9 @@ adminRouter.put('/members/:memberId/memberships/:membershipId/dates', requireRol
   const row = await Membership.findOne({ _id: membershipId, memberId, status: { $ne: 'PAUSED' } });
   if (!row) throw new HttpError(409, 'Paused membership dates cannot be corrected until the membership is resumed or cancelled.');
   row.startsAt = input.startsAt; row.expiresAt = input.expiresAt; row.status = input.expiresAt <= new Date() ? 'EXPIRED' : row.status === 'EXPIRED' ? 'ACTIVE' : row.status; row.statusChangedAt = new Date(); row.statusChangedBy = new mongoose.Types.ObjectId(req.auth!.accountId); row.statusReason = input.reason; await row.save();
-  await audit(req.auth!.accountId, 'MEMBERSHIP_DATES_CORRECTED', 'Membership', membershipId, { memberId, reason: input.reason, startsAt: input.startsAt, expiresAt: input.expiresAt }); res.json(membershipResponse(row));
+  await audit(req.auth!.accountId, 'MEMBERSHIP_DATES_CORRECTED', 'Membership', membershipId, { memberId, reason: input.reason, startsAt: input.startsAt, expiresAt: input.expiresAt });
+  await notifyMember(memberId, { type: 'MEMBERSHIP_UPDATE', tone: 'INFO', dedupeKey: `membership-dates:${membershipId}:${row.statusChangedAt?.toISOString()}`, sourceId: membershipId, title: 'Your membership dates were updated', message: `Your membership is now valid until ${new Date(row.expiresAt).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'Asia/Manila' })}.`, actionUrl: '/portal/membership' });
+  res.json(membershipResponse(row));
 }));
 
 adminRouter.post('/enrollments', asyncRoute(async (req, res) => {
@@ -663,6 +703,8 @@ adminRouter.post('/nfc-cards', asyncRoute(async (req, res) => {
   const token = randomToken();
   const card = await NfcCard.create({ uid: normalizeCardUid(input.uid), portalTokenHash: portalTokenHash(token), memberId: member._id, assignedBy: req.auth!.accountId });
   await audit(req.auth!.accountId, 'NFC_CARD_ASSIGNED', 'NfcCard', String(card._id), { memberId: input.memberId });
+  await MemberRequest.updateMany({ memberId: input.memberId, type: 'NFC_LOST', status: 'OPEN' }, { $set: { status: 'RESOLVED', resolvedAt: new Date(), resolvedBy: req.auth!.accountId, resolutionNote: 'Replacement NFC card issued.' } });
+  await notifyMember(input.memberId, { type: 'CARD_UPDATE', tone: 'INFO', dedupeKey: `member-card-assigned:${card._id}`, sourceId: String(card._id), title: 'Your NFC card is ready', message: `Card ending in ${card.uid.slice(-4)} is active for gym attendance.`, actionUrl: '/portal/membership' });
   res.status(201).json({ id: String(card._id), uid: card.uid, portalUrl: `${config().MEMBER_APP_ORIGIN}/c/${token}`, note: 'Save or encode this URL now. The API does not store the readable token.' });
 }));
 
@@ -671,7 +713,9 @@ adminRouter.post('/nfc-cards/:cardId/revoke', asyncRoute(async (req, res) => {
   const card = await NfcCard.findOneAndUpdate({ _id: cardId, status: 'ACTIVE' }, { status, revokedAt: new Date(), revokeReason: reason }, { new: true })
     ?? await CoachNfcCard.findOneAndUpdate({ _id: cardId, status: 'ACTIVE' }, { status, revokedAt: new Date(), revokeReason: reason }, { new: true });
   if (!card) throw new HttpError(404, 'Active card not found.');
-  await audit(req.auth!.accountId, 'NFC_CARD_REVOKED', 'NfcCard', cardId, { reason, status }); res.status(204).end();
+  await audit(req.auth!.accountId, 'NFC_CARD_REVOKED', 'NfcCard', cardId, { reason, status });
+  if ('memberId' in card && card.memberId) await notifyMember(String(card.memberId), { type: 'CARD_UPDATE', tone: 'WARNING', dedupeKey: `member-card-revoked:${cardId}:${status}`, sourceId: cardId, title: `Your NFC card was marked ${status.toLowerCase()}`, message: reason, actionUrl: '/portal/membership' });
+  res.status(204).end();
 }));
 
 const cashAmount = z.number().finite().min(0).max(100_000_000).transform((value) => Math.round((value + Number.EPSILON) * 100) / 100);
@@ -819,6 +863,7 @@ adminRouter.post('/payments/:paymentId/void', requireRoles('OWNER'), asyncRoute(
       payment.status = 'VOID'; payment.voidedAt = new Date(); payment.voidedBy = new mongoose.Types.ObjectId(req.auth!.accountId); payment.voidReason = input.reason; payment.relatedRecordAction = relatedRecordAction; await payment.save({ session });
       await audit(req.auth!.accountId, 'PAYMENT_VOIDED', 'Payment', paymentId, { reference: payment.reference, reason: input.reason, relatedRecordAction }, session);
       await notifyOwners({ type: 'PAYMENT_VOIDED', tone: 'WARNING', dedupeKey: `payment-voided:${paymentId}`, sourceId: paymentId, title: `Payment ${payment.reference} was voided`, message: `${payment.type.replaceAll('_', ' ')} payment worth PHP ${payment.amountDue.toLocaleString('en-PH')} was voided. Review the receipt and audit reason.`, actionUrl: '/admin/payments' }, undefined, session);
+      if (payment.memberId) await notifyMember(String(payment.memberId), { type: 'PAYMENT_UPDATE', tone: 'WARNING', dedupeKey: `member-payment-voided:${paymentId}`, sourceId: paymentId, title: 'A payment receipt was voided', message: `Receipt ${payment.reference} was voided. Contact reception if you need clarification.`, actionUrl: '/portal/membership' }, session);
     });
   } finally { await session.endSession(); }
   res.status(204).end();
@@ -906,9 +951,9 @@ adminRouter.delete('/plans/:planId', requireRoles('OWNER'), asyncRoute(async (re
 const clockTime = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
 const weeklyHoursSchema = z.array(z.object({ day: z.enum(WEEKDAYS), isClosed: z.boolean(), openTime: clockTime, closeTime: clockTime }).refine((entry) => entry.isClosed || entry.closeTime > entry.openTime, 'Closing time must be later than opening time.')).length(7).refine((entries) => new Set(entries.map((entry) => entry.day)).size === 7, 'Provide one schedule for every day.');
 const exceptionSchema = z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), label: z.string().trim().max(100).optional(), isClosed: z.boolean(), openTime: clockTime.optional(), closeTime: clockTime.optional() }).refine((entry) => entry.isClosed || Boolean(entry.openTime && entry.closeTime && entry.closeTime > entry.openTime), 'Open exceptions require valid opening and closing times.');
-const gymSettingsInput = z.object({ defaultWalkInFee: z.number().nonnegative(), firstMembershipFee: z.number().nonnegative(), announcementsEnabled: z.boolean(), gymStatusOverride: z.enum(['AUTO', 'OPEN', 'CLOSED']), hoursToday: z.string().trim().min(3).max(100).optional(), weeklyHours: weeklyHoursSchema, scheduleExceptions: z.array(exceptionSchema).max(60) });
+const gymSettingsInput = z.object({ gymAddress: z.string().trim().max(300), defaultWalkInFee: z.number().nonnegative(), firstMembershipFee: z.number().nonnegative(), announcementsEnabled: z.boolean(), gymStatusOverride: z.enum(['AUTO', 'OPEN', 'CLOSED']), hoursToday: z.string().trim().min(3).max(100).optional(), weeklyHours: weeklyHoursSchema, scheduleExceptions: z.array(exceptionSchema).max(60) });
 adminRouter.post('/settings/preview', asyncRoute(async (req, res) => { const input = gymSettingsInput.parse(req.body); res.json(resolveGymAvailability(input)); }));
-adminRouter.get('/settings', asyncRoute(async (_req, res) => { const row = await GymSettings.findOneAndUpdate({ key: 'primary' }, { $setOnInsert: { defaultWalkInFee: 70, firstMembershipFee: 100, announcementsEnabled: true, weeklyHours: DEFAULT_WEEKLY_HOURS, scheduleExceptions: [] } }, { upsert: true, new: true }).lean<any>(); res.json({ ...row, firstMembershipFee: row.firstMembershipFee ?? 100, announcementsEnabled: row.announcementsEnabled ?? true, weeklyHours: row.weeklyHours?.length === 7 ? row.weeklyHours : DEFAULT_WEEKLY_HOURS, scheduleExceptions: row.scheduleExceptions ?? [] }); }));
+adminRouter.get('/settings', asyncRoute(async (_req, res) => { const row = await GymSettings.findOneAndUpdate({ key: 'primary' }, { $setOnInsert: { gymAddress: 'San Jose Gusu, Zamboanga City', defaultWalkInFee: 70, firstMembershipFee: 100, announcementsEnabled: true, weeklyHours: DEFAULT_WEEKLY_HOURS, scheduleExceptions: [] } }, { upsert: true, new: true }).lean<any>(); res.json({ ...row, gymAddress: row.gymAddress?.trim() || 'San Jose Gusu, Zamboanga City', firstMembershipFee: row.firstMembershipFee ?? 100, announcementsEnabled: row.announcementsEnabled ?? true, weeklyHours: row.weeklyHours?.length === 7 ? row.weeklyHours : DEFAULT_WEEKLY_HOURS, scheduleExceptions: row.scheduleExceptions ?? [] }); }));
 adminRouter.put('/settings', asyncRoute(async (req, res) => { const input = gymSettingsInput.parse(req.body); const row = await GymSettings.findOneAndUpdate({ key: 'primary' }, input, { upsert: true, new: true }); await audit(req.auth!.accountId, 'SETTINGS_UPDATED', 'GymSettings', String(row!._id), { scheduleExceptions: input.scheduleExceptions.length, announcementsEnabled: input.announcementsEnabled }); res.json(row); }));
 
 function announcementResponse(row: any) { return { id: String(row._id), title: row.title, message: row.message, status: row.status, publishAt: row.publishAt ?? undefined, expiresAt: row.expiresAt ?? undefined, createdAt: row.createdAt, updatedAt: row.updatedAt }; }

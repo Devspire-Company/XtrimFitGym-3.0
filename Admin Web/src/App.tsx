@@ -1,14 +1,16 @@
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router';
 import {
-  Activity, Archive, BarChart3, Bell, CalendarClock, CheckCheck, ChevronDown, Download, ScanLine, Dumbbell, Eye, EyeOff, Megaphone,
+  Activity, Archive, BarChart3, Bell, CalendarClock, CheckCheck, ChevronDown, ScanLine, Dumbbell, Eye, EyeOff, Megaphone,
   Home, IdCard, KeyRound, LogOut, Menu, PhilippinePeso, RefreshCw, Search, Settings, ShieldCheck,
-  CheckCircle2, LayoutGrid, LockKeyhole, Pencil, Printer, RotateCcw, Table2, Trash2, TrendingUp, UserCheck, UserPlus, UserRound, UserX, Users, WalletCards, WifiOff, X,
+  CheckCircle2, LayoutGrid, LockKeyhole, Pencil, RotateCcw, Table2, Trash2, TrendingUp, UserCheck, UserPlus, UserRound, UserX, Users, WalletCards, WifiOff, X,
 } from 'lucide-react';
 import { adminApi, authApi, type AdminNotification, type AdminUser, type Announcement, type AttendanceRecord, type CashClosing, type Coach, type CoachAvailability, type CoachDay, type DashboardData, type Member, type MemberType, type PaymentDetail, type Plan, type PlanEligibility, type ReportData, type WalkInProfile } from './api';
 import { capitalizeNameParts, formatMobileNumber, PremiumDatePicker, PremiumDateTimePicker, PremiumMultiSelect, PremiumSelect, PremiumTimePicker, ReasonSelect } from './FormControls';
 import FunctionalSettingsPage from './SettingsPage';
 import MemberDetailPage from './MemberDetailPage';
+import { PasswordStrength, passwordChecks } from './PasswordStrength';
+import { downloadReportPdf, type ReportDownloadScope } from './reportPdf';
 
 type Loadable<T> = { data?: T; loading: boolean; error?: string };
 function useLoad<T>(loader: () => Promise<T>): Loadable<T> & { reload: () => void } {
@@ -762,6 +764,7 @@ function AnnouncementModal({ item, onClose, onSaved }: { item: Announcement | nu
 }
 const reportMoney = (amount: number) => `₱${amount.toLocaleString('en-PH', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 const reportTypeLabels: Record<ReportData['revenueBreakdown'][number]['type'], string> = { MEMBERSHIP: 'Memberships', WALK_IN: 'Walk-ins', CARD_REPLACEMENT: 'Card replacements' };
+const officialGymAddress = 'San Jose Gusu, Zamboanga City';
 function ReportsPage() {
   const [range, setRange] = useState<7 | 30 | 90 | { from: string; to: string }>(30);
   const [customOpen, setCustomOpen] = useState(false); const [from, setFrom] = useState(''); const [to, setTo] = useState(''); const [rangeError, setRangeError] = useState('');
@@ -771,6 +774,15 @@ function ReportsPage() {
 }
 function ReportsContent({ range }: { range: 7 | 30 | 90 | { from: string; to: string } }) {
   const result = useLoad(() => adminApi.reports(range));
+  const settings = useLoad(adminApi.settings);
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportError, setExportError] = useState('');
+  const downloadMenu = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    const closeMenu = (event: PointerEvent) => { if (!downloadMenu.current?.contains(event.target as Node)) downloadMenu.current?.removeAttribute('open'); };
+    document.addEventListener('pointerdown', closeMenu);
+    return () => document.removeEventListener('pointerdown', closeMenu);
+  }, []);
   if (!result.data) return <Panel><ConnectionState {...result} reload={result.reload} empty="No report data available" /></Panel>;
   const { summary, daily, monthlyActivity, revenueBreakdown, membershipStatus, topPlans, period } = result.data;
   const days = period.days;
@@ -786,13 +798,19 @@ function ReportsContent({ range }: { range: 7 | 30 | 90 | { from: string; to: st
   const maxBreakdown = Math.max(...revenueBreakdown.map((row) => row.amount), 1);
   const totalMemberships = Object.values(membershipStatus).reduce((total, value) => total + value, 0);
   const dateLabel = (date: string, compact = false) => new Date(`${date}T00:00:00+08:00`).toLocaleDateString('en-PH', compact ? { month: 'short', day: 'numeric' } : { month: 'short', day: 'numeric', year: 'numeric' });
-  const exportCsv = () => {
-    const quote = (value: string | number) => `"${String(value).replaceAll('"', '""')}"`;
-    const rows: Array<Array<string | number>> = [['X-TRIM FIT GYM REPORT'], ['Period', period.from, period.to], [], ['SUMMARY'], ['Metric', 'Value'], ['Cash collected', summary.revenue], ['Transactions', summary.transactions], ['Attendance', summary.attendance], ['Walk-ins', summary.walkIns], ['New members', summary.newMembers], ['Active memberships', summary.activeMemberships], [], ['REVENUE SOURCES'], ['Type', 'Amount', 'Payments'], ...revenueBreakdown.map((row) => [reportTypeLabels[row.type], row.amount, row.count]), [], ['MEMBERSHIP STATUS'], ['Status', 'Records'], ...Object.entries(membershipStatus).map(([status, count]) => [status, count]), [], ['TOP PLANS STARTED'], ['Plan', 'Memberships', 'Value'], ...topPlans.map((plan) => [plan.name, plan.count, plan.value]), [], ['DAILY RECORDS'], ['Date', 'Revenue', 'Transactions', 'Attendance', 'Walk-ins', 'New members'], ...daily.map((row) => [row.date, row.revenue, row.transactions, row.attendance, row.walkIns, row.newMembers])];
-    const blob = new Blob([`\uFEFF${rows.map((row) => row.map(quote).join(',')).join('\r\n')}`], { type: 'text/csv;charset=utf-8' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `xtrim-report-${period.from}-to-${period.to}.csv`; link.click(); URL.revokeObjectURL(url);
+  const exportPdf = async (scope: ReportDownloadScope) => {
+    setExportBusy(true);
+    setExportError('');
+    downloadMenu.current?.removeAttribute('open');
+    try {
+      await downloadReportPdf({ scope, data: result.data!, address: settings.data?.gymAddress?.trim() || officialGymAddress, logoUrl: '/logo.png' });
+    } catch (cause) {
+      setExportError(cause instanceof Error ? cause.message : 'The PDF could not be downloaded. Please try again.');
+    } finally { setExportBusy(false); }
   };
-  return <div className="reports-page" id="printable-report">
-    <div className="report-range"><div><CalendarClock /><span>Showing verified records from <strong>{dateLabel(period.from)}</strong> to <strong>{dateLabel(period.to)}</strong></span></div><div className="report-export-actions"><button className="button secondary" onClick={exportCsv}><Download />Export CSV</button><button className="button secondary" onClick={() => window.print()}><Printer />Print / save PDF</button></div></div>
+  return <><div className="reports-page">
+    <div className="report-range"><div><CalendarClock /><span>Showing verified records from <strong>{dateLabel(period.from)}</strong> to <strong>{dateLabel(period.to)}</strong></span></div><div className="report-export-actions"><details className="report-download-menu" ref={downloadMenu}><summary className="button secondary">{exportBusy ? 'Preparing PDF...' : 'Downloadables'}<ChevronDown /></summary><div className="report-download-popover"><button disabled={exportBusy} onClick={() => void exportPdf('demand')}>Memberships and walk-ins</button><button disabled={exportBusy} onClick={() => void exportPdf('revenue')}>Revenue performance</button><button disabled={exportBusy} onClick={() => void exportPdf('visits')}>Visits and attendance</button><button disabled={exportBusy} onClick={() => void exportPdf('memberships')}>Membership health</button><button disabled={exportBusy} onClick={() => void exportPdf('all')}>Complete report</button></div></details></div></div>
+    {exportError && <div className="form-error report-export-error">{exportError}</div>}
     <section className="report-summary">
       <article><span className="report-icon"><PhilippinePeso /></span><div><small>Cash collected</small><strong>{reportMoney(summary.revenue)}</strong><p>{summary.transactions} verified {summary.transactions === 1 ? 'transaction' : 'transactions'} · {reportMoney(average)} average</p></div></article>
       <article><span className="report-icon"><ScanLine /></span><div><small>Member attendance</small><strong>{summary.attendance.toLocaleString()}</strong><p>Accepted NFC and manual attendance records</p></div></article>
@@ -806,7 +824,7 @@ function ReportsContent({ range }: { range: 7 | 30 | 90 | { from: string; to: st
       <Panel className="report-traffic"><div className="report-panel-head"><div><span>Gym activity</span><h2>Daily visits</h2></div><Activity /></div><div className="traffic-list">{trafficRows.map((row) => { const total = row.attendance + row.walkIns; return <div key={row.date}><time>{dateLabel(row.date, true)}</time><div className="traffic-track"><span className="member" style={{ width: `${(row.attendance / maxTraffic) * 100}%` }} /><span className="walkin" style={{ width: `${(row.walkIns / maxTraffic) * 100}%` }} /></div><strong>{total}</strong></div>; })}</div><div className="report-legend"><span className="member">Member attendance</span><span className="walkin">Walk-ins</span></div></Panel>
       <Panel className="report-memberships"><div className="report-panel-head"><div><span>Current portfolio</span><h2>Membership health</h2></div><WalletCards /></div><div className="membership-health"><div className="membership-total"><strong>{totalMemberships}</strong><span>Total membership records</span></div><div className="membership-statuses">{Object.entries(membershipStatus).map(([status, count]) => <div key={status}><span className={status} /><small>{status}</small><strong>{count}</strong></div>)}</div></div><div className="top-plans"><h3>Plans started in this period</h3>{topPlans.length ? topPlans.map((plan, index) => <div key={plan.name}><span>{index + 1}</span><div><strong>{plan.name}</strong><small>{plan.count} {plan.count === 1 ? 'membership' : 'memberships'}</small></div><b>{reportMoney(plan.value)}</b></div>) : <p>No memberships started in this period.</p>}</div></Panel>
     </div>
-  </div>;
+  </div></>;
 }
 
 function MonthlyActivityChart({ rows }: { rows: ReportData['monthlyActivity'] }) {
@@ -817,13 +835,21 @@ function MonthlyActivityChart({ rows }: { rows: ReportData['monthlyActivity'] })
   const tickValues = scaleMaximum <= 4 ? Array.from({ length: scaleMaximum + 1 }, (_, index) => index) : Array.from({ length: 5 }, (_, index) => (scaleMaximum / 4) * index);
   const point = (value: number, index: number) => ({ x: left + (rows.length > 1 ? (index / (rows.length - 1)) * plotWidth : plotWidth / 2), y: top + plotHeight - ((value / scaleMaximum) * plotHeight) });
   const membershipPoints = rows.map((row, index) => point(row.memberships, index)); const walkInPoints = rows.map((row, index) => point(row.walkIns, index));
-  const curvePath = (points: Array<{ x: number; y: number }>) => points.length < 2 ? points.length ? `M ${points[0].x} ${points[0].y}` : '' : points.reduce((path, current, index) => {
-    if (index === 0) return `M ${current.x} ${current.y}`;
-    const previous = points[index - 1]; const before = points[index - 2] ?? previous; const next = points[index + 1] ?? current;
-    const controlOne = { x: previous.x + (current.x - before.x) / 6, y: previous.y + (current.y - before.y) / 6 };
-    const controlTwo = { x: current.x - (next.x - previous.x) / 6, y: current.y - (next.y - previous.y) / 6 };
-    return `${path} C ${controlOne.x} ${controlOne.y}, ${controlTwo.x} ${controlTwo.y}, ${current.x} ${current.y}`;
-  }, '');
+  const curvePath = (points: Array<{ x: number; y: number }>) => {
+    if (!points.length) return '';
+    if (points.length === 1) return `M ${points[0].x} ${points[0].y}`;
+    const slopes = points.slice(1).map((current, index) => (current.y - points[index].y) / (current.x - points[index].x));
+    const tangents = points.map((_current, index) => {
+      if (index === 0) return slopes[0];
+      if (index === points.length - 1) return slopes[slopes.length - 1];
+      const before = slopes[index - 1]; const after = slopes[index];
+      return before * after <= 0 ? 0 : (2 * before * after) / (before + after);
+    });
+    return points.slice(1).reduce((path, current, index) => {
+      const previous = points[index]; const horizontal = current.x - previous.x;
+      return `${path} C ${previous.x + horizontal / 3} ${previous.y + tangents[index] * horizontal / 3}, ${current.x - horizontal / 3} ${current.y - tangents[index + 1] * horizontal / 3}, ${current.x} ${current.y}`;
+    }, `M ${points[0].x} ${points[0].y}`);
+  };
   const areaPath = (points: Array<{ x: number; y: number }>) => points.length ? `${curvePath(points)} L ${points[points.length - 1].x} ${top + plotHeight} L ${points[0].x} ${top + plotHeight} Z` : '';
   const monthLabel = (month: string, long = false) => new Date(`${month}-01T00:00:00+08:00`).toLocaleDateString('en-PH', long ? { month: 'long', year: 'numeric' } : { month: 'short' });
   const totalMemberships = rows.reduce((total, row) => total + row.memberships, 0); const totalWalkIns = rows.reduce((total, row) => total + row.walkIns, 0);
@@ -834,11 +860,11 @@ function MonthlyActivityChart({ rows }: { rows: ReportData['monthlyActivity'] })
     <div className="monthly-title"><div><span>Annual activity intelligence</span><h2>Memberships and walk-ins</h2><p>Monthly demand across the latest twelve-month window</p></div><span className="monthly-title-icon"><TrendingUp /></span></div>
     <div className="monthly-content-grid">
       <div className="monthly-chart-shell">
-        <div className="monthly-chart-head"><div><span>Activity volume</span><small>Hover over a point for exact values</small></div><div className="monthly-legend"><span className="memberships">Memberships</span><span className="walkins">Walk-ins</span></div></div>
+        <div className="monthly-chart-head"><div><span>Monthly momentum</span><small>Hover over each month for exact values</small></div><div className="monthly-legend"><span className="memberships">Memberships</span><span className="walkins">Walk-ins</span></div></div>
         <div className="monthly-line-chart"><svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Monthly membership entries and walk-in visits over the last twelve months">
-          <defs><linearGradient id="membershipArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#d7bf62" stopOpacity=".24"/><stop offset="100%" stopColor="#d7bf62" stopOpacity="0"/></linearGradient><linearGradient id="walkInArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#68b9ab" stopOpacity=".2"/><stop offset="100%" stopColor="#68b9ab" stopOpacity="0"/></linearGradient><filter id="chartGlow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="3" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
+          <defs><linearGradient id="membershipArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#dcc35a" stopOpacity=".3"/><stop offset="55%" stopColor="#b49e48" stopOpacity=".09"/><stop offset="100%" stopColor="#897b3e" stopOpacity="0"/></linearGradient></defs>
           {tickValues.map((value) => { const y = top + plotHeight - ((value / scaleMaximum) * plotHeight); return <g key={value}><line className="monthly-grid-line" x1={left} x2={width - right} y1={y} y2={y}/><text className="monthly-y-label" x={left - 13} y={y + 4}>{value}</text></g>; })}
-          <path className="monthly-area memberships" d={areaPath(membershipPoints)}/><path className="monthly-area walkins" d={areaPath(walkInPoints)}/>
+          <path className="monthly-area memberships" d={areaPath(membershipPoints)}/>
           <path className="monthly-line memberships" d={curvePath(membershipPoints)}/><path className="monthly-line walkins" d={curvePath(walkInPoints)}/>
           {rows.map((row, index) => <g className="monthly-point-group" key={row.month}><line className="monthly-hover-guide" x1={membershipPoints[index].x} x2={membershipPoints[index].x} y1={top} y2={top + plotHeight}/><rect className="monthly-hit-area" x={membershipPoints[index].x - (plotWidth / Math.max(rows.length - 1, 1)) / 2} y={top} width={plotWidth / Math.max(rows.length - 1, 1)} height={plotHeight}><title>{monthLabel(row.month, true)} — {row.memberships} memberships, {row.walkIns} walk-ins</title></rect><circle className="monthly-dot memberships" cx={membershipPoints[index].x} cy={membershipPoints[index].y} r="4.5"/><circle className="monthly-dot walkins" cx={walkInPoints[index].x} cy={walkInPoints[index].y} r="4.5"/>{row.memberships > 0 && <text className="monthly-point-value memberships" x={membershipPoints[index].x} y={membershipPoints[index].y - 12}>{row.memberships}</text>}{row.walkIns > 0 && <text className="monthly-point-value walkins" x={walkInPoints[index].x} y={walkInPoints[index].y + 18}>{row.walkIns}</text>}<text className="monthly-x-label" x={membershipPoints[index].x} y={height - 10}>{monthLabel(row.month)}</text></g>)}
         </svg></div>
@@ -855,8 +881,9 @@ function Modal({ title, children, onClose, className = '' }: { title: string; ch
 
 function FirstPassword({ user, onComplete }: { user: AdminUser; onComplete: (user: AdminUser) => void }) {
   const [currentPassword, setCurrentPassword] = useState(''); const [newPassword, setNewPassword] = useState(''); const [confirmPassword, setConfirmPassword] = useState(''); const [visible, setVisible] = useState(false); const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
+  const valid = passwordChecks(newPassword).every((item) => item.passed) && newPassword === confirmPassword && currentPassword.length >= 8 && newPassword !== currentPassword;
   const submit = async (event: FormEvent) => { event.preventDefault(); setError(''); if (newPassword !== confirmPassword) { setError('New passwords do not match.'); return; } setBusy(true); try { await authApi.initializePassword(currentPassword, newPassword); onComplete({ ...user, mustChangePassword: false }); } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not change the temporary password.'); } finally { setBusy(false); } };
-  return <main className="login-page"><section className="login-visual"><img src="/logo.png" alt="X-TRIM FIT GYM" /><div><span className="eyebrow">ACCOUNT SECURITY</span><h1>One secure<br />first step.</h1><p>Replace the temporary password before managing gym operations.</p></div></section><section className="login-form"><div><span className="eyebrow">PASSWORD REQUIRED</span><h2>Create your password</h2><p>Use at least 10 characters with uppercase, lowercase, and a number.</p><form onSubmit={submit}><label>Temporary password<input type={visible ? 'text' : 'password'} value={currentPassword} placeholder="Enter the temporary password" onChange={(event) => setCurrentPassword(event.target.value)} autoComplete="current-password" required /></label><label>New password<input type={visible ? 'text' : 'password'} value={newPassword} placeholder="Create a secure password" onChange={(event) => setNewPassword(event.target.value)} autoComplete="new-password" required /></label><label>Confirm new password<input type={visible ? 'text' : 'password'} value={confirmPassword} placeholder="Enter the new password again" onChange={(event) => setConfirmPassword(event.target.value)} autoComplete="new-password" required /></label><button type="button" className="button secondary" onClick={() => setVisible(!visible)}>{visible ? <EyeOff /> : <Eye />}{visible ? 'Hide passwords' : 'Show passwords'}</button>{error && <div className="form-error">{error}</div>}<button className="button primary full" disabled={busy}>{busy ? 'Saving…' : 'Set password and continue'}</button></form></div></section></main>;
+  return <main className="login-page"><section className="login-visual"><img src="/logo.png" alt="X-TRIM FIT GYM" /><div><span className="eyebrow">ACCOUNT SECURITY</span><h1>One secure<br />first step.</h1><p>Replace the temporary password before managing gym operations.</p></div></section><section className="login-form"><div><span className="eyebrow">PASSWORD REQUIRED</span><h2>Create your password</h2><p>Create a private password that is difficult to guess.</p><form onSubmit={submit} noValidate><label>Temporary password<input type={visible ? 'text' : 'password'} value={currentPassword} placeholder="Enter the temporary password" onChange={(event) => setCurrentPassword(event.target.value)} autoComplete="current-password" required /></label><label>New password<input type={visible ? 'text' : 'password'} value={newPassword} placeholder="Create a secure password" onChange={(event) => setNewPassword(event.target.value)} autoComplete="new-password" required /></label><PasswordStrength value={newPassword}/><label>Confirm new password<input type={visible ? 'text' : 'password'} value={confirmPassword} placeholder="Enter the new password again" onChange={(event) => setConfirmPassword(event.target.value)} autoComplete="new-password" required /></label><button type="button" className="button secondary" onClick={() => setVisible(!visible)}>{visible ? <EyeOff /> : <Eye />}{visible ? 'Hide passwords' : 'Show passwords'}</button>{error && <div className="form-error">{error}</div>}<button className="button primary full" disabled={busy||!valid}>{busy ? 'Saving…' : 'Set password and continue'}</button></form></div></section></main>;
 }
 
 export default function App() {

@@ -242,6 +242,7 @@ coachAttendanceSchema.index({ coachId: 1, attendanceDate: 1 }, { unique: true })
 
 const gymSettingsSchema = new Schema({
   key: { type: String, default: 'primary', unique: true },
+  gymAddress: { type: String, default: 'San Jose Gusu, Zamboanga City', trim: true, maxlength: 300 },
   defaultWalkInFee: { type: Number, default: 70, min: 0 },
   firstMembershipFee: { type: Number, default: 100, min: 0 },
   announcementsEnabled: { type: Boolean, default: true },
@@ -286,7 +287,7 @@ const auditLogSchema = new Schema({
 
 const notificationSchema = new Schema({
   recipientAccountId: { type: Schema.Types.ObjectId, ref: 'Account', required: true, index: true },
-  type: { type: String, enum: ['MEMBERSHIP_EXPIRING', 'CARD_REQUIRED', 'PAYMENT_VOIDED', 'SECURITY'], required: true, index: true },
+  type: { type: String, enum: ['MEMBERSHIP_EXPIRING', 'CARD_REQUIRED', 'PAYMENT_VOIDED', 'SECURITY', 'MEMBERSHIP_UPDATE', 'CARD_UPDATE', 'PAYMENT_UPDATE', 'ANNOUNCEMENT', 'MEMBER_REQUEST'], required: true, index: true },
   tone: { type: String, enum: ['INFO', 'ACTION', 'WARNING'], default: 'INFO' },
   title: { type: String, required: true, trim: true },
   message: { type: String, required: true, trim: true },
@@ -299,6 +300,18 @@ const notificationSchema = new Schema({
 }, options);
 notificationSchema.index({ recipientAccountId: 1, dedupeKey: 1 }, { unique: true });
 notificationSchema.index({ recipientAccountId: 1, deletedAt: 1, resolvedAt: 1, createdAt: -1 });
+
+const memberRequestSchema = new Schema({
+  memberId: { type: Schema.Types.ObjectId, ref: 'Member', required: true, index: true },
+  type: { type: String, enum: ['RENEWAL', 'PROFILE_CORRECTION', 'NFC_LOST'], required: true, index: true },
+  status: { type: String, enum: ['OPEN', 'RESOLVED', 'CANCELLED'], default: 'OPEN', index: true },
+  message: { type: String, required: true, trim: true },
+  requestedChanges: { type: Schema.Types.Mixed, default: null },
+  resolvedAt: { type: Date, default: null },
+  resolvedBy: { type: Schema.Types.ObjectId, ref: 'Account', default: null },
+  resolutionNote: { type: String, default: null },
+}, options);
+memberRequestSchema.index({ memberId: 1, type: 1 }, { unique: true, partialFilterExpression: { status: 'OPEN' } });
 
 export const Account = model('Account', accountSchema);
 export const AuthSession = model('AuthSession', sessionSchema);
@@ -322,6 +335,7 @@ export const GymSettings = model('GymSettings', gymSettingsSchema);
 export const Announcement = model('Announcement', announcementSchema);
 export const AuditLog = model('AuditLog', auditLogSchema);
 export const Notification = model('Notification', notificationSchema);
+export const MemberRequest = model('MemberRequest', memberRequestSchema);
 
 export type AccountRole = 'OWNER' | 'ADMIN' | 'MEMBER' | 'COACH';
 export type ObjectId = mongoose.Types.ObjectId;

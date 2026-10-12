@@ -7,11 +7,20 @@ import { asyncRoute, HttpError } from '../http.js';
 import { hashPassword, normalizeUsername, portalTokenHash, randomToken, tokenHash, verifyPassword } from '../security.js';
 import { requireAuth } from '../middleware.js';
 import { audit } from '../audit.js';
+import { createNotification } from '../notifications.js';
 
 export const authRouter = Router();
 const loginLimiter = rateLimit({ windowMs: 15 * 60_000, limit: 10, standardHeaders: 'draft-8', legacyHeaders: false, message: { message: 'Too many sign-in attempts. Please wait and try again.' } });
 const credentialsSchema = z.object({ username: z.string().min(3).max(100), password: z.string().min(8).max(200), portal: z.enum(['admin', 'member', 'unified']), cardToken: z.string().min(20).max(200).optional() });
-const passwordSchema = z.object({ currentPassword: z.string().min(8).max(200), newPassword: z.string().min(10).max(200).regex(/[a-z]/).regex(/[A-Z]/).regex(/[0-9]/) });
+const passwordSchema = z.object({
+  currentPassword: z.string().min(8, 'Enter the complete temporary or current password.').max(200),
+  newPassword: z.string()
+    .min(10, 'Your new password must contain at least 10 characters.')
+    .max(200)
+    .regex(/[a-z]/, 'Add at least one lowercase letter.')
+    .regex(/[A-Z]/, 'Add at least one uppercase letter.')
+    .regex(/[0-9]/, 'Add at least one number.'),
+});
 const profileSchema = z.object({
   firstName: z.string().trim().min(1).max(80),
   lastName: z.string().trim().min(1).max(80),
@@ -103,6 +112,7 @@ authRouter.put('/password', requireAuth, asyncRoute(async (req, res) => {
   await account.save();
   await AuthSession.deleteMany({ accountId: account._id, _id: { $ne: req.auth!.sessionId } });
   await audit(req.auth!.accountId, 'PASSWORD_CHANGED', 'Account', String(account._id));
+  if (account.role === 'MEMBER') await createNotification(String(account._id), { type: 'SECURITY', tone: 'INFO', dedupeKey: `member-password-changed:${new Date().toISOString()}`, sourceId: String(account._id), title: 'Your password was changed', message: 'Other signed-in devices were logged out. Contact reception immediately if you did not make this change.', actionUrl: '/portal/account' });
   res.status(204).end();
 }));
 
@@ -121,6 +131,7 @@ authRouter.get('/sessions', requireAuth, asyncRoute(async (req, res) => {
 authRouter.delete('/sessions/others', requireAuth, asyncRoute(async (req, res) => {
   const result = await AuthSession.deleteMany({ accountId: req.auth!.accountId, _id: { $ne: req.auth!.sessionId } });
   await audit(req.auth!.accountId, 'OTHER_SESSIONS_REVOKED', 'Account', req.auth!.accountId, { count: result.deletedCount });
+  if (req.auth!.role === 'MEMBER' && result.deletedCount) await createNotification(req.auth!.accountId, { type: 'SECURITY', tone: 'INFO', dedupeKey: `member-sessions-revoked:${new Date().toISOString()}`, sourceId: req.auth!.accountId, title: 'Other devices were signed out', message: `${result.deletedCount} other active ${result.deletedCount === 1 ? 'session was' : 'sessions were'} revoked.`, actionUrl: '/portal/account' });
   res.json({ revoked: result.deletedCount });
 }));
 

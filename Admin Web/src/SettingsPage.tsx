@@ -2,7 +2,7 @@ import { FormEvent, ReactNode, useCallback, useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import {
   ArrowLeft, Building2, Check, ChevronRight, CircleUserRound, Download, Eye, EyeOff, KeyRound,
-  Laptop, LogOut, MonitorSmartphone, Plus, Power, RefreshCw, ScrollText, Search, ShieldCheck, UserCog, Users, X,
+  Laptop, LogOut, Megaphone, MonitorSmartphone, Plus, Power, RefreshCw, ScrollText, Search, ShieldCheck, UserCog, Users, X,
 } from 'lucide-react';
 import {
   adminApi, authApi, type AdminAccount, type AdminUser, type AttendanceStation, type AuditEntry,
@@ -36,10 +36,16 @@ function ConfirmDialog({ title, children, confirmLabel, danger, busy, onClose, o
 
 export default function SettingsPage({ user, onUserChange }: { user: AdminUser; onUserChange: (user: AdminUser) => void }) {
   const [searchParams, setSearchParams] = useSearchParams();
-  const [tab, setTab] = useState<Tab>(() => user.role === 'OWNER' && searchParams.get('tab') === 'audit' ? 'audit' : 'profile');
+  const requestedTab = () => {
+    const requested = searchParams.get('tab') as Tab | null;
+    const allowed: Tab[] = ['profile', 'security', 'operations', 'stations', ...(user.role === 'OWNER' ? ['accounts' as Tab, 'audit' as Tab] : [])];
+    return requested && allowed.includes(requested) ? requested : 'profile';
+  };
+  const [tab, setTab] = useState<Tab>(requestedTab);
+  useEffect(() => { setTab(requestedTab()); }, [searchParams, user.role]);
   const chooseTab = (value: Tab) => {
     setTab(value);
-    setSearchParams(value === 'audit' ? { tab: 'audit' } : {}, { replace: true });
+    setSearchParams(value === 'profile' ? {} : { tab: value }, { replace: true });
   };
   const tabs: Array<[Tab, string, ReactNode]> = [
     ['profile', 'My profile', <CircleUserRound />], ['security', 'Security', <ShieldCheck />],
@@ -140,7 +146,7 @@ function OperationsSettings() {
   const [preview, setPreview] = useState<GymPreview | null>(null); const [previewing, setPreviewing] = useState(false);
   const load = async () => { setLoading(true); setNotice(null); try { setValue(await adminApi.settings()); } catch (error) { setNotice({ kind: 'error', text: message(error, 'Could not load gym settings.') }); } finally { setLoading(false); } };
   useEffect(() => { void load(); }, []);
-  const save = async (event: FormEvent) => { event.preventDefault(); if (!value) return; setBusy(true); setNotice(null); try { setValue(await adminApi.updateSettings(value)); setNotice({ kind: 'success', text: 'Gym operations updated.' }); } catch (error) { setNotice({ kind: 'error', text: message(error, 'Could not save gym settings.') }); } finally { setBusy(false); } };
+  const save = async (event: FormEvent) => { event.preventDefault(); if (!value) return; setBusy(true); setNotice(null); try { const updated = await adminApi.updateSettings(value); setValue(updated); window.dispatchEvent(new CustomEvent('xtrim:settings-updated', { detail: updated })); setNotice({ kind: 'success', text: 'Gym operations updated.' }); } catch (error) { setNotice({ kind: 'error', text: message(error, 'Could not save gym settings.') }); } finally { setBusy(false); } };
   const updateDay = (index: number, patch: Partial<GymSettings['weeklyHours'][number]>) => value && setValue({ ...value, weeklyHours: value.weeklyHours.map((entry, entryIndex) => entryIndex === index ? { ...entry, ...patch } : entry) });
   const updateException = (index: number, patch: Partial<GymSettings['scheduleExceptions'][number]>) => value && setValue({ ...value, scheduleExceptions: value.scheduleExceptions.map((entry, entryIndex) => entryIndex === index ? { ...entry, ...patch } : entry) });
   const showPreview = async () => { if (!value) return; setPreviewing(true); setNotice(null); try { setPreview(await adminApi.previewSettings(value)); } catch (error) { setNotice({ kind: 'error', text: message(error, 'Could not generate the member preview.') }); } finally { setPreviewing(false); } };
@@ -152,6 +158,11 @@ function OperationsSettings() {
         <label>First membership fee (₱)<input type="number" min="0" step="0.01" inputMode="decimal" value={value.firstMembershipFee} onChange={(event) => setValue({ ...value, firstMembershipFee: Number(event.target.value) })} required /><span className="field-hint">Charged only on the first membership.</span></label>
         <label className="settings-full">Gym status override<PremiumSelect value={value.gymStatusOverride} onChange={(next) => setValue({ ...value, gymStatusOverride: next as GymSettings['gymStatusOverride'] })} placeholder="Choose gym status" options={[{ value: 'AUTO', label: 'Automatic — follow schedule' }, { value: 'OPEN', label: 'Force open' }, { value: 'CLOSED', label: 'Force closed' }]} /></label>
       </div>
+      <section className="settings-feature-control">
+        <span className="settings-feature-icon"><Megaphone /></span>
+        <div><h3>Announcements</h3><p>Show announcement management in the admin sidebar and published notices on Member Home.</p></div>
+        <label className="settings-switch"><input type="checkbox" checked={value.announcementsEnabled} onChange={(event) => setValue({ ...value, announcementsEnabled: event.target.checked })} /><span aria-hidden="true" /><strong>{value.announcementsEnabled ? 'On' : 'Off'}</strong></label>
+      </section>
       <section className="settings-schedule">
         <div className="settings-card-head"><div><h3>Weekly operating hours</h3><p>Member Home uses this schedule to calculate whether the gym is open.</p></div></div>
         <div className="weekly-hours">{value.weeklyHours.map((entry, index) => <div key={entry.day}>

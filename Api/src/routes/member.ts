@@ -36,7 +36,7 @@ memberRouter.get('/overview', asyncRoute(async (req, res) => {
     card: card ? { status: card.status } : null,
     gym,
     attendanceSummary: { totalVisits, visitsThisMonth, lastVisitAt: last?.recordedAt },
-    announcements: announcements.map((row) => ({ id: String(row._id), title: row.title, message: row.message, publishedAt: row.publishAt })),
+    announcements: settings?.announcementsEnabled === false ? [] : announcements.map((row) => ({ id: String(row._id), title: row.title, message: row.message, publishedAt: row.publishAt })),
   });
 }));
 

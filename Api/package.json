@@ -9,11 +9,15 @@
     "build": "tsc",
     "start": "node dist/src/server.js",
     "typecheck": "tsc --noEmit",
-    "test": "npm run build && node --test dist/tests/security.test.js dist/tests/membership-lifecycle.test.js dist/tests/membership-pricing.test.js dist/tests/manila-time.test.js",
+    "test": "npm run build && node --test dist/tests/*.test.js",
     "bootstrap:owner": "tsx --env-file=.env.local scripts/bootstrap-owner.ts",
     "bootstrap:station": "tsx --env-file=.env.local scripts/bootstrap-station.ts",
     "bootstrap:pricing": "tsx --env-file=.env.local scripts/bootstrap-pricing.ts",
-    "reset:owner-password": "tsx --env-file=.env.local scripts/reset-owner-password.ts"
+    "reset:owner-password": "tsx --env-file=.env.local scripts/reset-owner-password.ts",
+    "migrate": "tsx --env-file=.env.local scripts/migrate.ts",
+    "migrate:production": "node dist/scripts/migrate.js",
+    "backup": "tsx --env-file=.env.local scripts/backup.ts",
+    "backup:verify": "tsx --env-file=.env.local scripts/verify-restore.ts"
   },
   "dependencies": {
     "bcryptjs": "^3.0.2",

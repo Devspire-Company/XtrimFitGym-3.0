@@ -10,11 +10,22 @@ import { authRouter } from './routes/auth.js';
 import { adminRouter } from './routes/admin.js';
 import { memberRouter } from './routes/member.js';
 import { coachRouter } from './routes/coach.js';
+import { randomUUID } from 'node:crypto';
+import { log } from './logger.js';
+import { metricsHandler, recordMetrics } from './metrics.js';
 
 export function createApp() {
   const app = express();
   app.set('trust proxy', 1);
   app.disable('x-powered-by');
+  app.use((req, res, next) => {
+    const requestId = req.get('x-request-id')?.slice(0, 100) || randomUUID();
+    res.locals.requestId = requestId; res.setHeader('X-Request-Id', requestId);
+    const started = performance.now();
+    res.once('finish', () => log(res.statusCode >= 500 ? 'error' : res.statusCode >= 400 ? 'warn' : 'info', 'http_request', { requestId, method: req.method, path: req.path, status: res.statusCode, durationMs: Math.round((performance.now() - started) * 100) / 100 }));
+    next();
+  });
+  app.use(recordMetrics);
   app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
   app.use(cors({ origin(origin, callback) {
     if (!origin || config().allowedOrigins.includes(origin)) return callback(null, true);
@@ -35,6 +46,7 @@ export function createApp() {
     const ready = mongoose.connection.readyState === 1;
     res.status(ready ? 200 : 503).json({ status: ready ? 'ready' : 'not-ready', database: ready ? 'connected' : 'disconnected' });
   });
+  app.get('/metrics', metricsHandler);
   app.use('/v1/auth', authRouter);
   app.use('/v1/admin', adminRouter);
   app.use('/v1/member', memberRouter);

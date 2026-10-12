@@ -3,7 +3,7 @@ import { config } from './config.js';
 
 export async function connectDatabase() {
   const env = config();
-  await mongoose.connect(env.MONGODB_URI, { dbName: env.MONGODB_DATABASE, serverSelectionTimeoutMS: 10_000 });
+  await mongoose.connect(env.MONGODB_URI, { dbName: env.MONGODB_DATABASE, serverSelectionTimeoutMS: 10_000, autoIndex: env.NODE_ENV !== 'production' });
 }
 
 export async function disconnectDatabase() {

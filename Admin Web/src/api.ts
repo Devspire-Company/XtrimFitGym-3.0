@@ -33,6 +33,16 @@ export type AdminUser = { id: string; username: string; firstName: string; lastN
 export type SessionInfo = { id: string; current: boolean; userAgent: string; lastSeenAt: string; createdAt: string; expiresAt: string };
 export type AttendanceStation = { id: string; stationId: string; name: string; isActive: boolean; createdAt: string };
 export type AdminAccount = { id: string; username: string; firstName: string; lastName: string; role: 'ADMIN' | 'OWNER'; isActive: boolean; lastLoginAt?: string; createdAt: string };
+export type AdminNotification = {
+  id: string;
+  type: 'MEMBERSHIP_EXPIRING' | 'CARD_REQUIRED' | 'PAYMENT_VOIDED' | 'SECURITY';
+  tone: 'INFO' | 'ACTION' | 'WARNING';
+  title: string;
+  message: string;
+  actionUrl?: string;
+  readAt?: string;
+  createdAt: string;
+};
 export type DashboardData = {
   activeMembers: number;
   attendanceToday: number;
@@ -43,7 +53,7 @@ export type DashboardData = {
   recentActivity: Array<{ id: string; label: string; detail: string; occurredAt: string }>;
 };
 export type ReportData = {
-  period: { days: 7 | 30 | 90; from: string; to: string };
+  period: { days: number; preset?: 7 | 30 | 90; from: string; to: string };
   summary: { revenue: number; transactions: number; attendance: number; walkIns: number; newMembers: number; activeMemberships: number };
   daily: Array<{ date: string; revenue: number; transactions: number; attendance: number; walkIns: number; newMembers: number }>;
   monthlyActivity: Array<{ month: string; memberships: number; walkIns: number }>;
@@ -68,11 +78,12 @@ export type Plan = { _id: string; name: string; price: number; durationDays: num
 export type Weekday = 'SUNDAY' | 'MONDAY' | 'TUESDAY' | 'WEDNESDAY' | 'THURSDAY' | 'FRIDAY' | 'SATURDAY';
 export type WeeklyHours = { day: Weekday; isClosed: boolean; openTime: string; closeTime: string };
 export type ScheduleException = { date: string; label?: string; isClosed: boolean; openTime?: string; closeTime?: string };
-export type GymSettings = { defaultWalkInFee: number; firstMembershipFee: number; gymStatusOverride: 'AUTO' | 'OPEN' | 'CLOSED'; hoursToday?: string; weeklyHours: WeeklyHours[]; scheduleExceptions: ScheduleException[] };
+export type GymSettings = { defaultWalkInFee: number; firstMembershipFee: number; announcementsEnabled: boolean; gymStatusOverride: 'AUTO' | 'OPEN' | 'CLOSED'; hoursToday?: string; weeklyHours: WeeklyHours[]; scheduleExceptions: ScheduleException[] };
 export type GymPreview = { isOpen: boolean; statusLabel: string; hoursToday: string; scheduleSource: 'WEEKLY' | 'EXCEPTION' };
 export type Announcement = { id: string; title: string; message: string; status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED'; publishAt?: string; expiresAt?: string; createdAt: string; updatedAt: string };
 export type PaymentItem = { id: string; reference: string; payerName: string; amount: number; type: string; status: 'COMPLETED' | 'VOID'; receivedAt: string };
 export type PaymentDetail = { id: string; reference: string; payerName: string; payerReference?: string; type: string; status: 'COMPLETED' | 'VOID'; amountDue: number; planAmount: number; membershipFee: number; amountReceived: number; change: number; method: string; notes: string; receivedAt: string; receivedBy: string; voidedAt?: string; voidedBy?: string; voidReason?: string; relatedRecordAction?: string };
+export type CashClosing = { id: string; businessDate: string; status: 'CLOSED' | 'VOID'; openingCash: number; cashCollected: number; expectedCash: number; countedCash: number; variance: number; paymentCount: number; notes: string; closedAt: string; closedBy: string; voidedAt?: string; voidedBy?: string; voidReason?: string };
 export type AuditEntry = { id: string; actor: string; actorUsername?: string; action: string; targetType: string; targetId?: string; metadata: Record<string, unknown>; occurredAt: string };
 export type WalkInProfile = { id: string; fullName: string; phone?: string; email?: string; visits: number; lastVisitAt: string; visitedToday: boolean };
 export type CoachDay = 'MONDAY' | 'TUESDAY' | 'WEDNESDAY' | 'THURSDAY' | 'FRIDAY' | 'SATURDAY' | 'SUNDAY';
@@ -101,7 +112,12 @@ export const authApi = {
 
 export const adminApi = {
   dashboard: () => api<DashboardData>('/admin/dashboard'),
-  reports: (days: 7 | 30 | 90) => api<ReportData>(`/admin/reports?days=${days}`),
+  notifications: () => api<{ unread: number; items: AdminNotification[] }>('/admin/notifications'),
+  readNotification: (notificationId: string) => api<AdminNotification>(`/admin/notifications/${notificationId}/read`, { method: 'PATCH' }),
+  readAllNotifications: () => api<void>('/admin/notifications/read-all', { method: 'PATCH' }),
+  deleteNotification: (notificationId: string) => api<void>(`/admin/notifications/${notificationId}`, { method: 'DELETE' }),
+  clearReadNotifications: () => api<void>('/admin/notifications/read', { method: 'DELETE' }),
+  reports: (range: 7 | 30 | 90 | { from: string; to: string }) => api<ReportData>(`/admin/reports?${typeof range === 'number' ? `days=${range}` : new URLSearchParams(range)}`),
   announcements: () => api<{ items: Announcement[] }>('/admin/announcements'),
   createAnnouncement: (input: { title: string; message: string; status: 'DRAFT' | 'PUBLISHED'; publishAt?: string | null; expiresAt?: string | null }) => api<Announcement>('/admin/announcements', { method: 'POST', body: JSON.stringify(input) }),
   updateAnnouncement: (announcementId: string, input: { title: string; message: string; status: 'DRAFT' | 'PUBLISHED'; publishAt?: string | null; expiresAt?: string | null }) => api<Announcement>(`/admin/announcements/${announcementId}`, { method: 'PUT', body: JSON.stringify(input) }),
@@ -126,6 +142,10 @@ export const adminApi = {
   payments: (input: { page?: number; search?: string; type?: string; status?: string; from?: string; to?: string } = {}) => { const query = new URLSearchParams(); Object.entries(input).forEach(([key, value]) => { if (value !== undefined && value !== '') query.set(key, String(value)); }); return api<{ summary: { today: number; thisWeek: number }; page: number; limit: number; total: number; pages: number; items: PaymentItem[] }>(`/admin/payments?${query}`); },
   payment: (paymentId: string) => api<PaymentDetail>(`/admin/payments/${paymentId}`),
   voidPayment: (paymentId: string, reason: string, relatedAction: 'KEEP' | 'CANCEL_MEMBERSHIP' | 'VOID_VISIT') => api<void>(`/admin/payments/${paymentId}/void`, { method: 'POST', body: JSON.stringify({ reason, relatedAction }) }),
+  cashClosingSummary: (date?: string) => api<{ businessDate: string; cashCollected: number; paymentCount: number; closing: CashClosing | null }>(`/admin/cash-closings/summary${date ? `?date=${encodeURIComponent(date)}` : ''}`),
+  cashClosings: (page = 1) => api<{ page: number; limit: number; total: number; pages: number; items: CashClosing[] }>(`/admin/cash-closings?page=${page}&limit=10`),
+  closeCashDay: (input: { businessDate: string; openingCash: number; countedCash: number; notes: string }) => api<CashClosing>('/admin/cash-closings', { method: 'POST', body: JSON.stringify(input) }),
+  voidCashClosing: (closingId: string, reason: string) => api<void>(`/admin/cash-closings/${closingId}/void`, { method: 'POST', body: JSON.stringify({ reason }) }),
   auditLog: (input: { page?: number; limit?: number; search?: string; actor?: string; action?: string; targetType?: string; from?: string; to?: string }) => { const query = new URLSearchParams(); Object.entries(input).forEach(([key, value]) => { if (value !== undefined && value !== '') query.set(key, String(value)); }); return api<{ page: number; limit: number; total: number; pages: number; items: AuditEntry[] }>(`/admin/audit?${query}`); },
   plans: () => api<{ items: Plan[]; firstMembershipFee: number }>('/admin/plans'),
   createPlan: (input: { name: string; price: number; durationDays: number; eligibility: PlanEligibility; isPromo: boolean }) => api<Plan>('/admin/plans', { method: 'POST', body: JSON.stringify(input) }),

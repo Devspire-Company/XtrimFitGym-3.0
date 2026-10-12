@@ -108,6 +108,29 @@ const paymentSchema = new Schema({
   notes: { type: String, default: '' },
 }, options);
 
+const cashClosingSchema = new Schema({
+  businessDate: { type: String, required: true },
+  status: { type: String, enum: ['CLOSED', 'VOID'], default: 'CLOSED', index: true },
+  openingCash: { type: Number, required: true, min: 0 },
+  cashCollected: { type: Number, required: true, min: 0 },
+  expectedCash: { type: Number, required: true, min: 0 },
+  countedCash: { type: Number, required: true, min: 0 },
+  variance: { type: Number, required: true },
+  paymentCount: { type: Number, required: true, min: 0 },
+  notes: { type: String, default: '' },
+  closedBy: { type: Schema.Types.ObjectId, ref: 'Account', required: true },
+  closedAt: { type: Date, required: true, default: Date.now },
+  voidedBy: { type: Schema.Types.ObjectId, ref: 'Account', default: null },
+  voidedAt: { type: Date, default: null },
+  voidReason: { type: String, default: null },
+}, options);
+cashClosingSchema.index({ businessDate: 1 }, { name: 'cash_closing_active_business_date', unique: true, partialFilterExpression: { status: 'CLOSED' } });
+
+const cashDayLockSchema = new Schema({
+  _id: { type: String, required: true },
+  touchedAt: { type: Date, required: true, default: Date.now },
+}, { versionKey: false });
+
 const nfcCardSchema = new Schema({
   uid: { type: String, required: true, unique: true, uppercase: true, trim: true, index: true },
   portalTokenHash: { type: String, required: true, unique: true, select: false },
@@ -221,6 +244,7 @@ const gymSettingsSchema = new Schema({
   key: { type: String, default: 'primary', unique: true },
   defaultWalkInFee: { type: Number, default: 70, min: 0 },
   firstMembershipFee: { type: Number, default: 100, min: 0 },
+  announcementsEnabled: { type: Boolean, default: true },
   gymStatusOverride: { type: String, enum: ['AUTO', 'OPEN', 'CLOSED'], default: 'AUTO' },
   hoursToday: { type: String, default: 'Contact the gym for today\'s hours.' },
   weeklyHours: [{
@@ -260,6 +284,22 @@ const auditLogSchema = new Schema({
   occurredAt: { type: Date, required: true, default: Date.now, index: true },
 }, { versionKey: false });
 
+const notificationSchema = new Schema({
+  recipientAccountId: { type: Schema.Types.ObjectId, ref: 'Account', required: true, index: true },
+  type: { type: String, enum: ['MEMBERSHIP_EXPIRING', 'CARD_REQUIRED', 'PAYMENT_VOIDED', 'SECURITY'], required: true, index: true },
+  tone: { type: String, enum: ['INFO', 'ACTION', 'WARNING'], default: 'INFO' },
+  title: { type: String, required: true, trim: true },
+  message: { type: String, required: true, trim: true },
+  actionUrl: { type: String, default: null },
+  sourceId: { type: String, default: null },
+  dedupeKey: { type: String, required: true },
+  readAt: { type: Date, default: null, index: true },
+  deletedAt: { type: Date, default: null, index: true },
+  resolvedAt: { type: Date, default: null, index: true },
+}, options);
+notificationSchema.index({ recipientAccountId: 1, dedupeKey: 1 }, { unique: true });
+notificationSchema.index({ recipientAccountId: 1, deletedAt: 1, resolvedAt: 1, createdAt: -1 });
+
 export const Account = model('Account', accountSchema);
 export const AuthSession = model('AuthSession', sessionSchema);
 export const Member = model('Member', memberSchema);
@@ -267,6 +307,8 @@ export const MembershipPlan = model('MembershipPlan', membershipPlanSchema);
 export const Membership = model('Membership', membershipSchema);
 export const MembershipLock = model('MembershipLock', membershipLockSchema);
 export const Payment = model('Payment', paymentSchema);
+export const CashClosing = model('CashClosing', cashClosingSchema);
+export const CashDayLock = model('CashDayLock', cashDayLockSchema);
 export const NfcCard = model('NfcCard', nfcCardSchema);
 export const CoachNfcCard = model('CoachNfcCard', coachNfcCardSchema);
 export const AttendanceStation = model('AttendanceStation', stationSchema);
@@ -279,6 +321,7 @@ export const CoachAttendance = model('CoachAttendance', coachAttendanceSchema);
 export const GymSettings = model('GymSettings', gymSettingsSchema);
 export const Announcement = model('Announcement', announcementSchema);
 export const AuditLog = model('AuditLog', auditLogSchema);
+export const Notification = model('Notification', notificationSchema);
 
 export type AccountRole = 'OWNER' | 'ADMIN' | 'MEMBER' | 'COACH';
 export type ObjectId = mongoose.Types.ObjectId;

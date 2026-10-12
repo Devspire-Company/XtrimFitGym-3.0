@@ -138,6 +138,28 @@
 @media(max-width:620px){.coach-summary-facts,.coach-details-grid,.coach-details-schedule .coach-full-schedule{grid-template-columns:1fr}.coach-summary-facts{gap:6px}.coach-details-hero{grid-template-columns:48px 1fr}.coach-details-hero>.record-state{grid-column:2;justify-self:start}.coach-details-actions{display:grid;grid-template-columns:1fr}.coach-details-actions .button{width:100%}}
 @media(max-width:760px){.attendance-filters{grid-template-columns:1fr}.attendance-filters .search{grid-column:auto}.coach-attendance-history article{grid-template-columns:1fr;gap:4px}.coach-attendance-history article>small{text-align:left}}
 
+/* Owner cash closing: compact, explicit and audit-friendly. */
+.cash-close-panel{margin-bottom:16px;padding:17px 19px}
+.cash-close-main{display:grid;grid-template-columns:44px minmax(220px,1fr) auto auto;align-items:center;gap:14px}
+.cash-close-icon{width:44px;height:44px;display:grid;place-items:center;border:1px solid rgba(255,255,255,.09);border-radius:12px;background:#171c21;color:#b7a75e}.cash-close-icon svg{width:19px}
+.cash-close-main small{color:#7f8892;font-size:9px;font-weight:800;letter-spacing:.09em;text-transform:uppercase}.cash-close-main h2{margin-top:3px;font-size:23px}.cash-close-main p{margin:4px 0 0;color:#8a939d;font-size:11px}.cash-close-actions{display:flex;gap:8px}
+.cash-close-history{display:grid;gap:7px;margin-top:16px;padding-top:14px;border-top:1px solid rgba(255,255,255,.07)}.cash-close-history>p{margin:0;color:#818a94;font-size:11px}.cash-close-history article{display:grid;grid-template-columns:minmax(180px,1fr) auto repeat(3,minmax(90px,.5fr)) auto;align-items:center;gap:14px;padding:12px 13px;border:1px solid rgba(255,255,255,.07);border-radius:10px;background:#0c1013}.cash-close-history article strong,.cash-close-history article small{display:block}.cash-close-history article strong{font-size:12px}.cash-close-history article small{margin-bottom:3px;color:#7b848e;font-size:9px}.positive{color:#72cda1!important}.negative{color:#ef8790!important}
+.cash-close-calculation{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.cash-close-calculation span{padding:12px;border:1px solid rgba(255,255,255,.075);border-radius:9px;background:#0a0d10}.cash-close-calculation small,.cash-close-calculation strong{display:block}.cash-close-calculation small{color:#7e8791;font-size:9px;text-transform:uppercase}.cash-close-calculation strong{margin-top:5px;font-size:15px}.modal-field{display:grid;gap:7px;margin-top:15px;color:#c9cdd2;font-size:11px;font-weight:700}.modal-field textarea{min-height:90px;padding:11px;border:1px solid var(--line);border-radius:9px;background:#0b0e11;color:#fff;font:inherit}
+
+/* Report range and file outputs. */
+.report-custom-panel{margin-bottom:14px;padding:14px 16px}.report-custom-panel form{display:grid;grid-template-columns:minmax(220px,1fr) 170px 170px auto;align-items:center;gap:9px}.report-custom-panel form>div small,.report-custom-panel form>div strong{display:block}.report-custom-panel form>div small{color:#7d8690;font-size:8px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}.report-custom-panel form>div strong{margin-top:4px;font-size:12px}.report-custom-panel .form-error{margin-top:9px}.report-range{justify-content:space-between}.report-range>div{display:flex;align-items:center;gap:9px}.report-export-actions{display:flex!important;gap:7px!important}.report-export-actions .button{min-height:36px;padding:0 11px;font-size:10px}.report-export-actions svg{width:14px}
+@media(max-width:900px){.cash-close-main{grid-template-columns:44px 1fr auto}.cash-close-actions{grid-column:1/-1;justify-content:flex-end}.cash-close-history article{grid-template-columns:1fr auto repeat(3,80px)}.cash-close-history article .button{grid-column:1/-1;justify-self:end}.report-custom-panel form{grid-template-columns:1fr 1fr}.report-custom-panel form>div{grid-column:1/-1}}
+@media(max-width:620px){.cash-close-main{grid-template-columns:40px 1fr}.cash-close-main>.record-state{grid-column:2;justify-self:start}.cash-close-actions{display:grid;grid-template-columns:1fr 1fr}.cash-close-history article{grid-template-columns:1fr 1fr}.cash-close-history article>div:first-child{grid-column:1/-1}.cash-close-calculation{grid-template-columns:1fr}.report-custom-panel form{grid-template-columns:1fr}.report-range{align-items:flex-start;flex-direction:column}.report-export-actions{width:100%}.report-export-actions .button{flex:1}}
+
+@media print{
+  body:has(#printable-report) *{visibility:hidden}
+  #printable-report,#printable-report *{visibility:visible}
+  #printable-report{position:absolute;inset:0;width:100%;display:block!important;color:#111;background:#fff}
+  #printable-report .report-export-actions{display:none!important}
+  #printable-report .panel,#printable-report article{break-inside:avoid;border:1px solid #bbb!important;background:#fff!important;box-shadow:none!important;color:#111!important}
+  #printable-report *{color:#222!important}
+}
+
 /* Receipt preview and thermal-print layout. */
 .receipt-modal{width:min(590px,100%);padding:22px}.receipt-modal .modal-head{margin-bottom:16px}.receipt-modal .modal-head h2{font-size:24px}
 .printable-receipt{width:100%;max-width:490px;margin:0 auto;padding:20px!important;border-radius:12px!important;background:#0b0f12!important}

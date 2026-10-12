@@ -14,6 +14,7 @@ const schema = z.object({
   SESSION_HOURS_ADMIN: z.coerce.number().positive().default(8),
   SESSION_HOURS_MEMBER: z.coerce.number().positive().default(168),
   ATTENDANCE_DUPLICATE_SECONDS: z.coerce.number().int().min(30).default(120),
+  MONITORING_TOKEN: z.string().min(24).optional(),
 });
 
 export type Config = z.infer<typeof schema> & { allowedOrigins: string[] };

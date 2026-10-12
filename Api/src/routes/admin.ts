@@ -2,8 +2,8 @@ import { Router } from 'express';
 import mongoose from 'mongoose';
 import { z } from 'zod';
 import {
-  Account, Announcement, AttendanceLock, AttendanceRecord, AttendanceStation, AuditLog, AuthSession, Coach, CoachAttendance, CoachNfcCard, GymSettings,
-  Member, Membership, MembershipLock, MembershipPlan, NfcCard, Payment, WalkInProfile, WalkInVisit,
+  Account, Announcement, AttendanceLock, AttendanceRecord, AttendanceStation, AuditLog, AuthSession, CashClosing, Coach, CoachAttendance, CoachNfcCard, GymSettings,
+  Member, Membership, MembershipLock, MembershipPlan, NfcCard, Notification, Payment, WalkInProfile, WalkInVisit,
 } from '../models.js';
 import { audit } from '../audit.js';
 import { config } from '../config.js';
@@ -13,6 +13,8 @@ import { membershipPricing, planIsEligible, type MemberType, type PlanEligibilit
 import { requireReadyAccount, requireRoles } from '../middleware.js';
 import { addDays, hashPassword, memberNumber, normalizeCardUid, normalizeUsername, portalTokenHash, randomToken, reference, temporaryPassword } from '../security.js';
 import { DAY_MILLISECONDS, DEFAULT_WEEKLY_HOURS, WEEKDAYS, manilaDateKey, manilaDayBounds, manilaMonthBounds, manilaWeekBounds, resolveGymAvailability } from '../manila-time.js';
+import { createNotification, notifyOwners, syncOperationalNotifications } from '../notifications.js';
+import { calculateCashClosing, cashCollectionSummary, lockCashDay, lockOpenCashDay } from '../cash-closing.js';
 
 export const adminRouter = Router();
 adminRouter.use(requireRoles('OWNER', 'ADMIN'), requireReadyAccount);
@@ -67,6 +69,58 @@ function membershipResponse(row: any) {
 }
 function regexLiteral(value: string) { return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
+function notificationResponse(row: any) {
+  return {
+    id: String(row._id), type: row.type, tone: row.tone, title: row.title, message: row.message,
+    actionUrl: row.actionUrl ?? undefined, readAt: row.readAt ?? undefined, createdAt: row.createdAt,
+  };
+}
+
+function cashClosingResponse(row: any) {
+  const actorName = (actor: any) => actor ? `${actor.firstName} ${actor.lastName}` : 'Unknown';
+  return {
+    id: String(row._id), businessDate: row.businessDate, status: row.status,
+    openingCash: row.openingCash, cashCollected: row.cashCollected, expectedCash: row.expectedCash,
+    countedCash: row.countedCash, variance: row.variance, paymentCount: row.paymentCount,
+    notes: row.notes ?? '', closedAt: row.closedAt, closedBy: actorName(row.closedBy),
+    voidedAt: row.voidedAt ?? undefined, voidedBy: row.voidedBy ? actorName(row.voidedBy) : undefined,
+    voidReason: row.voidReason ?? undefined,
+  };
+}
+
+adminRouter.get('/notifications', asyncRoute(async (req, res) => {
+  await syncOperationalNotifications(req.auth!.accountId);
+  const [rows, unread] = await Promise.all([
+    Notification.find({ recipientAccountId: req.auth!.accountId, deletedAt: null, resolvedAt: null }).sort({ createdAt: -1 }).limit(40).lean<any[]>(),
+    Notification.countDocuments({ recipientAccountId: req.auth!.accountId, deletedAt: null, resolvedAt: null, readAt: null }),
+  ]);
+  res.json({ unread, items: rows.map(notificationResponse) });
+}));
+
+adminRouter.patch('/notifications/read-all', asyncRoute(async (req, res) => {
+  await Notification.updateMany({ recipientAccountId: req.auth!.accountId, deletedAt: null, resolvedAt: null, readAt: null }, { $set: { readAt: new Date() } });
+  res.status(204).end();
+}));
+
+adminRouter.delete('/notifications/read', asyncRoute(async (req, res) => {
+  await Notification.updateMany({ recipientAccountId: req.auth!.accountId, readAt: { $ne: null }, deletedAt: null }, { $set: { deletedAt: new Date() } });
+  res.status(204).end();
+}));
+
+adminRouter.patch('/notifications/:notificationId/read', asyncRoute(async (req, res) => {
+  const notificationId = id.parse(req.params.notificationId);
+  const row = await Notification.findOneAndUpdate({ _id: notificationId, recipientAccountId: req.auth!.accountId, deletedAt: null, resolvedAt: null }, { $set: { readAt: new Date() } }, { new: true });
+  if (!row) throw new HttpError(404, 'Notification not found.');
+  res.json(notificationResponse(row));
+}));
+
+adminRouter.delete('/notifications/:notificationId', asyncRoute(async (req, res) => {
+  const notificationId = id.parse(req.params.notificationId);
+  const row = await Notification.findOneAndUpdate({ _id: notificationId, recipientAccountId: req.auth!.accountId, deletedAt: null }, { $set: { deletedAt: new Date() } });
+  if (!row) throw new HttpError(404, 'Notification not found.');
+  res.status(204).end();
+}));
+
 adminRouter.get('/dashboard', asyncRoute(async (_req, res) => {
   const now = new Date();
   const today = manilaDayBounds(manilaDateKey(now));
@@ -86,10 +140,25 @@ adminRouter.get('/dashboard', asyncRoute(async (_req, res) => {
 
 adminRouter.get('/reports', asyncRoute(async (req, res) => {
   await expireDueMemberships();
-  const days = z.coerce.number().int().refine((value) => [7, 30, 90].includes(value), 'Choose a 7, 30, or 90 day report.').default(30).parse(req.query.days);
+  const reportDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
+    const parsed = new Date(`${value}T00:00:00+08:00`);
+    return !Number.isNaN(parsed.getTime()) && manilaDateKey(parsed) === value;
+  }, 'Choose a valid date.');
+  const reportQuery = z.object({
+    days: z.coerce.number().int().refine((value) => [7, 30, 90].includes(value), 'Choose a 7, 30, or 90 day report.').optional(),
+    from: reportDate.optional(),
+    to: reportDate.optional(),
+  }).refine((value) => Boolean(value.from) === Boolean(value.to), 'Choose both a start and end date.').parse(req.query);
   const todayStart = manilaDayBounds(manilaDateKey()).start;
-  const start = new Date(todayStart.getTime() - ((days - 1) * DAY_MILLISECONDS));
-  const end = new Date(todayStart.getTime() + DAY_MILLISECONDS);
+  const presetDays = reportQuery.from ? undefined : (reportQuery.days ?? 30);
+  const fromKey = reportQuery.from ?? manilaDateKey(new Date(todayStart.getTime() - (((presetDays ?? 30) - 1) * DAY_MILLISECONDS)));
+  const toKey = reportQuery.to ?? manilaDateKey(todayStart);
+  if (fromKey > toKey) throw new HttpError(400, 'The report start date must be before the end date.');
+  if (toKey > manilaDateKey()) throw new HttpError(400, 'Reports cannot include future dates.');
+  const start = manilaDayBounds(fromKey).start;
+  const end = manilaDayBounds(toKey).end;
+  const days = Math.round((end.getTime() - start.getTime()) / DAY_MILLISECONDS);
+  if (days < 1 || days > 366) throw new HttpError(400, 'Choose a report range of 1 to 366 days.');
   const currentMonth = manilaMonthBounds();
   const currentMonthKey = manilaDateKey(currentMonth.start);
   const currentYear = Number(currentMonthKey.slice(0, 4)); const currentMonthNumber = Number(currentMonthKey.slice(5, 7));
@@ -157,7 +226,7 @@ adminRouter.get('/reports', asyncRoute(async (req, res) => {
     return { month: key, memberships: membershipMonthMap.get(key) ?? 0, walkIns: walkInMonthMap.get(key) ?? 0 };
   });
   res.json({
-    period: { days, from: manilaDateKey(start), to: manilaDateKey(todayStart) },
+    period: { days, preset: presetDays, from: fromKey, to: toKey },
     summary: {
       revenue: daily.reduce((total, row) => total + row.revenue, 0), transactions: daily.reduce((total, row) => total + row.transactions, 0),
       attendance: daily.reduce((total, row) => total + row.attendance, 0), walkIns: daily.reduce((total, row) => total + row.walkIns, 0),
@@ -282,6 +351,7 @@ adminRouter.post('/members/:memberId/memberships/renew', asyncRoute(async (req, 
   let output: any;
   try {
     await session.withTransaction(async () => {
+      await lockOpenCashDay(session);
       await MembershipLock.findOneAndUpdate({ _id: member._id }, { $set: { touchedAt: new Date() } }, { upsert: true, new: true, session });
       const hasMembershipHistory = Boolean(await Membership.exists({ memberId }).session(session));
       const pricing = membershipPricing(plan.price, settings?.firstMembershipFee ?? 100, !hasMembershipHistory);
@@ -355,6 +425,7 @@ adminRouter.post('/enrollments', asyncRoute(async (req, res) => {
   let result: { memberId: string; memberNumber: string; username: string; temporaryPassword: string; paymentReference: string } | undefined;
   try {
     await transaction.withTransaction(async () => {
+      await lockOpenCashDay(transaction);
       const number = memberNumber(); const username = normalizeUsername(input.username); const start = input.startsAt ?? new Date(); const verifiedAt = new Date();
       const [member] = await Member.create([{ memberNumber: number, firstName: input.firstName, lastName: input.lastName, phone: input.phone || null, email: input.email || null, birthDate: input.birthDate, emergencyContact: input.emergencyContact, memberType: input.memberType, studentVerifiedAt: input.memberType === 'STUDENT' ? verifiedAt : null, studentVerifiedBy: input.memberType === 'STUDENT' ? req.auth!.accountId : null, sourceWalkInProfileId: input.sourceWalkInProfileId ?? null }], { session: transaction });
       await Account.create([{ username, passwordHash: await hashPassword(password), role: 'MEMBER', firstName: input.firstName, lastName: input.lastName, memberId: member!._id, mustChangePassword: true }], { session: transaction });
@@ -543,6 +614,7 @@ adminRouter.post('/walk-ins', asyncRoute(async (req, res) => {
   let output: any;
   try {
     await transaction.withTransaction(async () => {
+      await lockOpenCashDay(transaction);
       let profile: any;
       if (input.profileId) profile = await WalkInProfile.findById(input.profileId).session(transaction);
       else {
@@ -602,6 +674,79 @@ adminRouter.post('/nfc-cards/:cardId/revoke', asyncRoute(async (req, res) => {
   await audit(req.auth!.accountId, 'NFC_CARD_REVOKED', 'NfcCard', cardId, { reason, status }); res.status(204).end();
 }));
 
+const cashAmount = z.number().finite().min(0).max(100_000_000).transform((value) => Math.round((value + Number.EPSILON) * 100) / 100);
+const cashClosingInput = z.object({
+  businessDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  openingCash: cashAmount,
+  countedCash: cashAmount,
+  notes: z.string().trim().max(500).default(''),
+});
+
+adminRouter.get('/cash-closings/summary', requireRoles('OWNER'), asyncRoute(async (req, res) => {
+  const businessDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).default(manilaDateKey()).parse(req.query.date);
+  if (businessDate > manilaDateKey()) throw new HttpError(400, 'A future cash day cannot be reviewed.');
+  const [summary, closing] = await Promise.all([
+    cashCollectionSummary(businessDate),
+    CashClosing.findOne({ businessDate, status: 'CLOSED' }).populate('closedBy', 'firstName lastName').lean<any>(),
+  ]);
+  res.json({ businessDate, ...summary, closing: closing ? cashClosingResponse(closing) : null });
+}));
+
+adminRouter.get('/cash-closings', requireRoles('OWNER'), asyncRoute(async (req, res) => {
+  const input = z.object({ page: z.coerce.number().int().min(1).default(1), limit: z.coerce.number().int().min(5).max(50).default(10) }).parse(req.query);
+  const [rows, total] = await Promise.all([
+    CashClosing.find().sort({ businessDate: -1, closedAt: -1 }).skip((input.page - 1) * input.limit).limit(input.limit)
+      .populate('closedBy', 'firstName lastName').populate('voidedBy', 'firstName lastName').lean<any[]>(),
+    CashClosing.countDocuments(),
+  ]);
+  res.json({ page: input.page, limit: input.limit, total, pages: Math.max(1, Math.ceil(total / input.limit)), items: rows.map(cashClosingResponse) });
+}));
+
+adminRouter.post('/cash-closings', requireRoles('OWNER'), asyncRoute(async (req, res) => {
+  const input = cashClosingInput.parse(req.body);
+  if (input.businessDate !== manilaDateKey()) throw new HttpError(400, 'Only today’s cash can be closed.');
+  const session = await mongoose.startSession();
+  let closingId = '';
+  try {
+    await session.withTransaction(async () => {
+      await lockOpenCashDay(session, input.businessDate);
+      const summary = await cashCollectionSummary(input.businessDate, session);
+      const calculated = calculateCashClosing(input.openingCash, summary.cashCollected, input.countedCash);
+      const [closing] = await CashClosing.create([{
+        ...input, ...summary, ...calculated, status: 'CLOSED', closedBy: req.auth!.accountId, closedAt: new Date(),
+      }], { session });
+      if (!closing) throw new HttpError(500, 'Cash closing could not be created.');
+      closingId = String(closing._id);
+      await audit(req.auth!.accountId, 'CASH_DAY_CLOSED', 'CashClosing', closingId, {
+        businessDate: input.businessDate, expectedCash: calculated.expectedCash, countedCash: input.countedCash, variance: calculated.variance,
+      }, session);
+    });
+  } finally { await session.endSession(); }
+  const row = await CashClosing.findById(closingId).populate('closedBy', 'firstName lastName').lean<any>();
+  res.status(201).json(cashClosingResponse(row));
+}));
+
+adminRouter.post('/cash-closings/:closingId/void', requireRoles('OWNER'), asyncRoute(async (req, res) => {
+  const closingId = id.parse(req.params.closingId);
+  const { reason } = z.object({ reason: z.string().trim().min(5).max(500) }).parse(req.body);
+  const session = await mongoose.startSession();
+  try {
+    await session.withTransaction(async () => {
+      const existing = await CashClosing.findOne({ _id: closingId, status: 'CLOSED' }).session(session);
+      if (!existing) throw new HttpError(409, 'Only an active cash closing can be voided.');
+      await lockCashDay(session, existing.businessDate);
+      const row = await CashClosing.findOneAndUpdate(
+        { _id: closingId, status: 'CLOSED' },
+        { $set: { status: 'VOID', voidedBy: req.auth!.accountId, voidedAt: new Date(), voidReason: reason } },
+        { new: true, session },
+      );
+      if (!row) throw new HttpError(409, 'This cash closing was already changed.');
+      await audit(req.auth!.accountId, 'CASH_CLOSING_VOIDED', 'CashClosing', closingId, { businessDate: row.businessDate, reason }, session);
+    });
+  } finally { await session.endSession(); }
+  res.status(204).end();
+}));
+
 adminRouter.get('/payments', asyncRoute(async (req, res) => {
   const input = z.object({ page: z.coerce.number().int().min(1).default(1), limit: z.coerce.number().int().min(10).max(100).default(25), search: z.string().trim().max(100).default(''), type: z.enum(['MEMBERSHIP', 'WALK_IN', 'CARD_REPLACEMENT']).optional(), status: z.enum(['COMPLETED', 'VOID']).optional(), from: z.coerce.date().optional(), to: z.coerce.date().optional() }).parse(req.query);
   const now = new Date();
@@ -655,6 +800,7 @@ adminRouter.post('/payments/:paymentId/void', requireRoles('OWNER'), asyncRoute(
     await session.withTransaction(async () => {
       const payment = await Payment.findOne({ _id: paymentId, status: 'COMPLETED' }).session(session);
       if (!payment) throw new HttpError(409, 'Only a completed payment can be voided.');
+      await lockOpenCashDay(session, manilaDateKey(payment.receivedAt));
       if (input.relatedAction === 'CANCEL_MEMBERSHIP' && payment.type !== 'MEMBERSHIP') throw new HttpError(400, 'This payment is not linked to a membership.');
       if (input.relatedAction === 'VOID_VISIT' && payment.type !== 'WALK_IN') throw new HttpError(400, 'This payment is not linked to a walk-in visit.');
       let relatedRecordAction: 'KEPT' | 'MEMBERSHIP_CANCELLED' | 'VISIT_VOIDED' = 'KEPT';
@@ -672,6 +818,7 @@ adminRouter.post('/payments/:paymentId/void', requireRoles('OWNER'), asyncRoute(
       }
       payment.status = 'VOID'; payment.voidedAt = new Date(); payment.voidedBy = new mongoose.Types.ObjectId(req.auth!.accountId); payment.voidReason = input.reason; payment.relatedRecordAction = relatedRecordAction; await payment.save({ session });
       await audit(req.auth!.accountId, 'PAYMENT_VOIDED', 'Payment', paymentId, { reference: payment.reference, reason: input.reason, relatedRecordAction }, session);
+      await notifyOwners({ type: 'PAYMENT_VOIDED', tone: 'WARNING', dedupeKey: `payment-voided:${paymentId}`, sourceId: paymentId, title: `Payment ${payment.reference} was voided`, message: `${payment.type.replaceAll('_', ' ')} payment worth PHP ${payment.amountDue.toLocaleString('en-PH')} was voided. Review the receipt and audit reason.`, actionUrl: '/admin/payments' }, undefined, session);
     });
   } finally { await session.endSession(); }
   res.status(204).end();
@@ -759,10 +906,10 @@ adminRouter.delete('/plans/:planId', requireRoles('OWNER'), asyncRoute(async (re
 const clockTime = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
 const weeklyHoursSchema = z.array(z.object({ day: z.enum(WEEKDAYS), isClosed: z.boolean(), openTime: clockTime, closeTime: clockTime }).refine((entry) => entry.isClosed || entry.closeTime > entry.openTime, 'Closing time must be later than opening time.')).length(7).refine((entries) => new Set(entries.map((entry) => entry.day)).size === 7, 'Provide one schedule for every day.');
 const exceptionSchema = z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), label: z.string().trim().max(100).optional(), isClosed: z.boolean(), openTime: clockTime.optional(), closeTime: clockTime.optional() }).refine((entry) => entry.isClosed || Boolean(entry.openTime && entry.closeTime && entry.closeTime > entry.openTime), 'Open exceptions require valid opening and closing times.');
-const gymSettingsInput = z.object({ defaultWalkInFee: z.number().nonnegative(), firstMembershipFee: z.number().nonnegative(), gymStatusOverride: z.enum(['AUTO', 'OPEN', 'CLOSED']), hoursToday: z.string().trim().min(3).max(100).optional(), weeklyHours: weeklyHoursSchema, scheduleExceptions: z.array(exceptionSchema).max(60) });
+const gymSettingsInput = z.object({ defaultWalkInFee: z.number().nonnegative(), firstMembershipFee: z.number().nonnegative(), announcementsEnabled: z.boolean(), gymStatusOverride: z.enum(['AUTO', 'OPEN', 'CLOSED']), hoursToday: z.string().trim().min(3).max(100).optional(), weeklyHours: weeklyHoursSchema, scheduleExceptions: z.array(exceptionSchema).max(60) });
 adminRouter.post('/settings/preview', asyncRoute(async (req, res) => { const input = gymSettingsInput.parse(req.body); res.json(resolveGymAvailability(input)); }));
-adminRouter.get('/settings', asyncRoute(async (_req, res) => { const row = await GymSettings.findOneAndUpdate({ key: 'primary' }, { $setOnInsert: { defaultWalkInFee: 70, firstMembershipFee: 100, weeklyHours: DEFAULT_WEEKLY_HOURS, scheduleExceptions: [] } }, { upsert: true, new: true }).lean<any>(); res.json({ ...row, firstMembershipFee: row.firstMembershipFee ?? 100, weeklyHours: row.weeklyHours?.length === 7 ? row.weeklyHours : DEFAULT_WEEKLY_HOURS, scheduleExceptions: row.scheduleExceptions ?? [] }); }));
-adminRouter.put('/settings', asyncRoute(async (req, res) => { const input = gymSettingsInput.parse(req.body); const row = await GymSettings.findOneAndUpdate({ key: 'primary' }, input, { upsert: true, new: true }); await audit(req.auth!.accountId, 'SETTINGS_UPDATED', 'GymSettings', String(row!._id), { scheduleExceptions: input.scheduleExceptions.length }); res.json(row); }));
+adminRouter.get('/settings', asyncRoute(async (_req, res) => { const row = await GymSettings.findOneAndUpdate({ key: 'primary' }, { $setOnInsert: { defaultWalkInFee: 70, firstMembershipFee: 100, announcementsEnabled: true, weeklyHours: DEFAULT_WEEKLY_HOURS, scheduleExceptions: [] } }, { upsert: true, new: true }).lean<any>(); res.json({ ...row, firstMembershipFee: row.firstMembershipFee ?? 100, announcementsEnabled: row.announcementsEnabled ?? true, weeklyHours: row.weeklyHours?.length === 7 ? row.weeklyHours : DEFAULT_WEEKLY_HOURS, scheduleExceptions: row.scheduleExceptions ?? [] }); }));
+adminRouter.put('/settings', asyncRoute(async (req, res) => { const input = gymSettingsInput.parse(req.body); const row = await GymSettings.findOneAndUpdate({ key: 'primary' }, input, { upsert: true, new: true }); await audit(req.auth!.accountId, 'SETTINGS_UPDATED', 'GymSettings', String(row!._id), { scheduleExceptions: input.scheduleExceptions.length, announcementsEnabled: input.announcementsEnabled }); res.json(row); }));
 
 function announcementResponse(row: any) { return { id: String(row._id), title: row.title, message: row.message, status: row.status, publishAt: row.publishAt ?? undefined, expiresAt: row.expiresAt ?? undefined, createdAt: row.createdAt, updatedAt: row.updatedAt }; }
 const announcementInput = z.object({ title: z.string().trim().min(3).max(120), message: z.string().trim().min(3).max(2000), status: z.enum(['DRAFT', 'PUBLISHED']), publishAt: z.coerce.date().nullable().optional(), expiresAt: z.coerce.date().nullable().optional() }).refine((entry) => !entry.expiresAt || !entry.publishAt || entry.expiresAt > entry.publishAt, { message: 'Expiry must be after publication.', path: ['expiresAt'] });
@@ -831,6 +978,7 @@ adminRouter.patch('/accounts/:accountId/status', requireRoles('OWNER'), asyncRou
   if (!row) throw new HttpError(404, 'Administrator account not found.');
   if (!isActive) await AuthSession.deleteMany({ accountId: row._id });
   await audit(req.auth!.accountId, isActive ? 'ADMIN_ACCOUNT_ENABLED' : 'ADMIN_ACCOUNT_DISABLED', 'Account', accountId);
+  await notifyOwners({ type: 'SECURITY', tone: 'WARNING', dedupeKey: `admin-status:${accountId}:${isActive}:${Date.now()}`, sourceId: accountId, title: `Administrator account ${isActive ? 'enabled' : 'disabled'}`, message: `${row.firstName} ${row.lastName}'s administrator access was ${isActive ? 'restored' : 'disabled'}.`, actionUrl: '/admin/settings?tab=accounts' });
   res.json(adminAccountResponse(row));
 }));
 adminRouter.post('/accounts/:accountId/reset-password', requireRoles('OWNER'), asyncRoute(async (req, res) => {
@@ -843,6 +991,8 @@ adminRouter.post('/accounts/:accountId/reset-password', requireRoles('OWNER'), a
   await row.save();
   await AuthSession.deleteMany({ accountId: row._id });
   await audit(req.auth!.accountId, 'ADMIN_PASSWORD_RESET', 'Account', accountId);
+  await createNotification(accountId, { type: 'SECURITY', tone: 'WARNING', dedupeKey: `password-reset:${accountId}:${Date.now()}`, sourceId: accountId, title: 'Your password was reset', message: 'The system owner issued a temporary password and signed out your other sessions. Change it before continuing.', actionUrl: '/admin/settings?tab=security' });
+  await notifyOwners({ type: 'SECURITY', tone: 'WARNING', dedupeKey: `admin-password-reset:${accountId}:${Date.now()}`, sourceId: accountId, title: 'Administrator password reset', message: `${row.firstName} ${row.lastName}'s password was reset and their active sessions were revoked.`, actionUrl: '/admin/settings?tab=accounts' });
   res.json({ temporaryPassword: password });
 }));
 

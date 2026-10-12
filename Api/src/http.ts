@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
 import { ZodError } from 'zod';
+import { log } from './logger.js';
 
 export class HttpError extends Error {
   constructor(public status: number, message: string, public code?: string) {
@@ -14,7 +15,7 @@ export function notFound(_req: Request, res: Response): void {
   res.status(404).json({ message: 'The requested endpoint does not exist.' });
 }
 
-export function errorHandler(error: unknown, _req: Request, res: Response, _next: NextFunction): void {
+export function errorHandler(error: unknown, req: Request, res: Response, _next: NextFunction): void {
   if (error instanceof ZodError) {
     res.status(400).json({ message: 'Please check the submitted information.', fields: error.flatten().fieldErrors });
     return;
@@ -28,7 +29,6 @@ export function errorHandler(error: unknown, _req: Request, res: Response, _next
     res.status(409).json({ message: 'That record already exists or conflicts with an active record.' });
     return;
   }
-  console.error(error);
+  log('error', 'unhandled_error', { requestId: res.locals.requestId, method: req.method, path: req.path, error });
   res.status(500).json({ message: 'An unexpected server error occurred.' });
 }
-

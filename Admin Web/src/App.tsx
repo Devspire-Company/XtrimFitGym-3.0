@@ -1,11 +1,11 @@
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router';
 import {
-  Activity, Archive, BarChart3, CalendarClock, ChevronDown, ScanLine, Dumbbell, Eye, EyeOff, Megaphone,
+  Activity, Archive, BarChart3, Bell, CalendarClock, CheckCheck, ChevronDown, Download, ScanLine, Dumbbell, Eye, EyeOff, Megaphone,
   Home, IdCard, KeyRound, LogOut, Menu, PhilippinePeso, RefreshCw, Search, Settings, ShieldCheck,
-  CheckCircle2, LayoutGrid, Pencil, RotateCcw, Table2, Trash2, TrendingUp, UserCheck, UserPlus, UserRound, UserX, Users, WalletCards, WifiOff, X,
+  CheckCircle2, LayoutGrid, LockKeyhole, Pencil, Printer, RotateCcw, Table2, Trash2, TrendingUp, UserCheck, UserPlus, UserRound, UserX, Users, WalletCards, WifiOff, X,
 } from 'lucide-react';
-import { adminApi, authApi, type AdminUser, type Announcement, type AttendanceRecord, type Coach, type CoachAvailability, type CoachDay, type DashboardData, type Member, type MemberType, type PaymentDetail, type Plan, type PlanEligibility, type ReportData, type WalkInProfile } from './api';
+import { adminApi, authApi, type AdminNotification, type AdminUser, type Announcement, type AttendanceRecord, type CashClosing, type Coach, type CoachAvailability, type CoachDay, type DashboardData, type Member, type MemberType, type PaymentDetail, type Plan, type PlanEligibility, type ReportData, type WalkInProfile } from './api';
 import { capitalizeNameParts, formatMobileNumber, PremiumDatePicker, PremiumDateTimePicker, PremiumMultiSelect, PremiumSelect, PremiumTimePicker, ReasonSelect } from './FormControls';
 import FunctionalSettingsPage from './SettingsPage';
 import MemberDetailPage from './MemberDetailPage';
@@ -29,16 +29,156 @@ const nav = [
   ['/payments', 'Cash Payments', PhilippinePeso], ['/coaches', 'Coaches', Dumbbell], ['/announcements', 'Announcements', Megaphone], ['/reports', 'Reports', BarChart3],
 ] as const;
 
+function notificationAge(value: string) {
+  const elapsed = Math.max(0, Date.now() - new Date(value).getTime());
+  const minutes = Math.floor(elapsed / 60_000);
+  if (minutes < 1) return 'Just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(value).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' });
+}
+
+function NotificationsMenu() {
+  const navigate = useNavigate();
+  const container = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [items, setItems] = useState<AdminNotification[]>([]);
+  const [unread, setUnread] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+
+  const load = useCallback(async (quiet = false) => {
+    if (!quiet) setLoading(true);
+    try {
+      const result = await adminApi.notifications();
+      setItems(result.items);
+      setUnread(result.unread);
+      setError('');
+    } catch (cause) {
+      if (!quiet) setError(cause instanceof Error ? cause.message : 'Notifications could not be loaded.');
+    } finally {
+      if (!quiet) setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+    const refresh = window.setInterval(() => { if (!document.hidden) void load(true); }, 60_000);
+    const onFocus = () => void load(true);
+    window.addEventListener('focus', onFocus);
+    return () => { window.clearInterval(refresh); window.removeEventListener('focus', onFocus); };
+  }, [load]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!container.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpen(false); };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => { document.removeEventListener('pointerdown', onPointerDown); document.removeEventListener('keydown', onKeyDown); };
+  }, [open]);
+
+  const openNotification = async (item: AdminNotification) => {
+    if (busy) return;
+    if (!item.readAt) {
+      setBusy(item.id);
+      try {
+        const updated = await adminApi.readNotification(item.id);
+        setItems((current) => current.map((entry) => entry.id === item.id ? updated : entry));
+        setUnread((count) => Math.max(0, count - 1));
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : 'The notification could not be opened.');
+        setBusy('');
+        return;
+      }
+      setBusy('');
+    }
+    setOpen(false);
+    if (item.actionUrl) navigate(item.actionUrl.replace(/^\/admin/, '') || '/dashboard');
+  };
+
+  const readAll = async () => {
+    if (!unread || busy) return;
+    setBusy('read-all');
+    try {
+      await adminApi.readAllNotifications();
+      const readAt = new Date().toISOString();
+      setItems((current) => current.map((item) => item.readAt ? item : { ...item, readAt }));
+      setUnread(0);
+      setError('');
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Notifications could not be marked as read.'); }
+    finally { setBusy(''); }
+  };
+
+  const remove = async (item: AdminNotification) => {
+    if (busy) return;
+    setBusy(item.id);
+    try {
+      await adminApi.deleteNotification(item.id);
+      setItems((current) => current.filter((entry) => entry.id !== item.id));
+      if (!item.readAt) setUnread((count) => Math.max(0, count - 1));
+      setError('');
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'The notification could not be deleted.'); }
+    finally { setBusy(''); }
+  };
+
+  const clearRead = async () => {
+    if (busy || !items.some((item) => item.readAt)) return;
+    setBusy('clear-read');
+    try {
+      await adminApi.clearReadNotifications();
+      setItems((current) => current.filter((item) => !item.readAt));
+      setError('');
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Read notifications could not be cleared.'); }
+    finally { setBusy(''); }
+  };
+
+  return <div className="notification-center" ref={container}>
+    <button type="button" className={`notification-trigger ${unread ? 'has-unread' : ''}`} aria-label={unread ? `${unread} unread notifications` : 'Notifications'} aria-haspopup="dialog" aria-expanded={open} onClick={() => { setOpen((value) => !value); if (!open) void load(true); }}><Bell />{unread > 0 && <span>{unread > 99 ? '99+' : unread}</span>}</button>
+    {open && <section className="notification-panel" role="dialog" aria-label="Notifications">
+      <header><div><span className="notification-kicker">Admin inbox</span><h2>Notifications</h2></div>{unread > 0 && <button type="button" onClick={() => void readAll()} disabled={Boolean(busy)}><CheckCheck />Mark all read</button>}</header>
+      {error && <div className="notification-error">{error}<button type="button" onClick={() => void load()}>Retry</button></div>}
+      <div className="notification-list">
+        {loading ? <div className="notification-empty"><RefreshCw className="spin" /><strong>Checking updates</strong><span>Loading the latest admin alerts.</span></div> : items.length ? items.map((item) => {
+          const Icon = item.type === 'CARD_REQUIRED' ? IdCard : item.type === 'MEMBERSHIP_EXPIRING' ? CalendarClock : item.type === 'PAYMENT_VOIDED' ? PhilippinePeso : KeyRound;
+          const category = item.type === 'CARD_REQUIRED' ? 'NFC card' : item.type === 'MEMBERSHIP_EXPIRING' ? 'Membership' : item.type === 'PAYMENT_VOIDED' ? 'Payment review' : 'Account security';
+          return <article key={item.id} className={`${item.readAt ? '' : 'unread'} tone-${item.tone.toLowerCase()}`}>
+            <button type="button" className="notification-content" disabled={busy === item.id} onClick={() => void openNotification(item)}>
+              <span className="notification-icon"><Icon /></span><span className="notification-copy"><strong>{item.title}</strong><span>{item.message}</span><span className="notification-meta"><em>{category}</em><time dateTime={item.createdAt}>{notificationAge(item.createdAt)}</time></span></span>{!item.readAt && <i aria-label="Unread" />}
+            </button>
+            <button type="button" className="notification-delete" aria-label={`Delete: ${item.title}`} disabled={Boolean(busy)} onClick={() => void remove(item)}><Trash2 /></button>
+          </article>;
+        }) : <div className="notification-empty"><CheckCircle2 /><strong>You are all caught up</strong><span>Important operational and security updates will appear here.</span></div>}
+      </div>
+      {items.some((item) => item.readAt) && <footer><button type="button" disabled={Boolean(busy)} onClick={() => void clearRead()}><Trash2 />Clear read notifications</button></footer>}
+    </section>}
+  </div>;
+}
+
 function Shell({ user, onLogout, onUserChange }: { user: AdminUser; onLogout: () => Promise<void>; onUserChange: (user: AdminUser) => void }) {
   const [open, setOpen] = useState(false);
   const [confirmLogout, setConfirmLogout] = useState(false);
+  const [announcementsEnabled, setAnnouncementsEnabled] = useState(true);
   const location = useLocation();
-  const visibleNav = nav;
+  useEffect(() => {
+    let active = true;
+    void adminApi.settings().then((settings) => { if (active) setAnnouncementsEnabled(settings.announcementsEnabled); }).catch(() => undefined);
+    const onSettingsUpdated = (event: Event) => setAnnouncementsEnabled((event as CustomEvent<{ announcementsEnabled: boolean }>).detail.announcementsEnabled);
+    window.addEventListener('xtrim:settings-updated', onSettingsUpdated);
+    return () => { active = false; window.removeEventListener('xtrim:settings-updated', onSettingsUpdated); };
+  }, []);
+  const visibleNav = nav.filter(([path]) => announcementsEnabled || path !== '/announcements');
   return <div className="app-shell">
     <header className="topbar">
       <button className="mobile-menu" onClick={() => setOpen(true)} aria-label="Open navigation"><Menu /></button>
       <Link to="/dashboard" className="brand"><img src="/logo.png" alt="X-TRIM FIT GYM" /></Link>
-      <div className="identity"><span className="avatar">{user.firstName[0]}{user.lastName[0]}</span><div><strong>{user.firstName} {user.lastName}</strong><small>Gym {user.role === 'OWNER' ? 'Owner' : 'Administrator'}</small></div></div>
+      <div className="topbar-account"><NotificationsMenu /><div className="identity"><span className="avatar">{user.firstName[0]}{user.lastName[0]}</span><div><strong>{user.firstName} {user.lastName}</strong><small>Gym {user.role === 'OWNER' ? 'Owner' : 'Administrator'}</small></div></div></div>
     </header>
     {open && <button className="scrim" onClick={() => setOpen(false)} aria-label="Close navigation" />}
     <aside className={`sidebar ${open ? 'open' : ''}`}>
@@ -58,7 +198,7 @@ function Shell({ user, onLogout, onUserChange }: { user: AdminUser; onLogout: ()
       <Route path="/walk-ins" element={<WalkInsPage />} />
       <Route path="/payments" element={<PaymentsPage viewerRole={user.role} />} />
       <Route path="/coaches" element={<CoachesPage viewerRole={user.role} />} />
-      <Route path="/announcements" element={<AnnouncementsPage viewerRole={user.role} />} />
+      <Route path="/announcements" element={announcementsEnabled ? <AnnouncementsPage viewerRole={user.role} /> : <Navigate to="/settings?tab=operations" replace />} />
       <Route path="/reports" element={<ReportsPage />} />
       <Route path="/audit" element={<Navigate to="/settings?tab=audit" replace />} />
       <Route path="/settings" element={<FunctionalSettingsPage user={user} onUserChange={onUserChange} />} />
@@ -554,6 +694,7 @@ function PaymentsPage({ viewerRole }: { viewerRole: AdminUser['role'] }) {
   const changePage = (next: number) => { setPage(next); result.reload(); };
   return <>
     <PageHeader title="Cash Payments" subtitle="Authoritative over-the-counter transactions and receipt references." icon={<PhilippinePeso />} action={totals} />
+    {viewerRole === 'OWNER' && <CashClosingPanel onChanged={result.reload} />}
     <Panel><form className="payment-filters" onSubmit={(event) => { event.preventDefault(); setPage(1); setSubmitted(filters); result.reload(); }}>
       <label className="search"><Search /><input value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} placeholder="Search reference or payer" /></label>
       <PremiumSelect value={filters.type} onChange={(value) => setFilters({ ...filters, type: value })} options={[{ value: '', label: 'All payment types' }, { value: 'MEMBERSHIP', label: 'Membership' }, { value: 'WALK_IN', label: 'Walk-in' }, { value: 'CARD_REPLACEMENT', label: 'Card replacement' }]} placeholder="All payment types" />
@@ -565,6 +706,23 @@ function PaymentsPage({ viewerRole }: { viewerRole: AdminUser['role'] }) {
     <Panel>{result.data?.items.length ? <><div className="table-wrap"><table className="payment-table"><thead><tr><th>Reference</th><th>Payer</th><th>Type</th><th>Status</th><th>Amount</th><th>Received</th><th></th></tr></thead><tbody>{result.data.items.map((item) => <tr key={item.id}><td>{item.reference}</td><td>{item.payerName}</td><td>{item.type}</td><td><span className={`record-state ${item.status === 'COMPLETED' ? 'active' : 'cancelled'}`}>{item.status}</span></td><td>{money(item.amount)}</td><td>{new Date(item.receivedAt).toLocaleString()}</td><td><button className="button secondary compact" onClick={() => setSelected(item.id)}>View receipt</button></td></tr>)}</tbody></table></div><div className="pagination"><span>{result.data.total} payments · Page {result.data.page} of {result.data.pages}</span><div><button className="button secondary" disabled={page <= 1} onClick={() => changePage(page - 1)}>Previous</button><button className="button secondary" disabled={page >= result.data.pages} onClick={() => changePage(page + 1)}>Next</button></div></div></> : <ConnectionState {...result} reload={result.reload} empty="No cash payments match these filters" />}</Panel>
     {selected && <PaymentReceiptModal paymentId={selected} viewerRole={viewerRole} onClose={() => setSelected(undefined)} onChanged={() => { setSelected(undefined); result.reload(); }} />}
   </>;
+}
+function CashClosingPanel({ onChanged }: { onChanged: () => void }) {
+  const summary = useLoad(adminApi.cashClosingSummary);
+  const history = useLoad(() => adminApi.cashClosings());
+  const [closing, setClosing] = useState(false); const [historyOpen, setHistoryOpen] = useState(false);
+  const [openingCash, setOpeningCash] = useState(''); const [countedCash, setCountedCash] = useState(''); const [notes, setNotes] = useState('');
+  const [voiding, setVoiding] = useState<CashClosing>(); const [voidReason, setVoidReason] = useState(''); const [busy, setBusy] = useState(false); const [error, setError] = useState('');
+  const money = (amount: number) => `₱${amount.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const opening = Number(openingCash) || 0; const counted = Number(countedCash) || 0; const expected = opening + (summary.data?.cashCollected ?? 0); const variance = counted - expected;
+  const refresh = () => { summary.reload(); history.reload(); onChanged(); };
+  const submit = async (event: FormEvent) => { event.preventDefault(); if (!summary.data) return; setBusy(true); setError(''); try { await adminApi.closeCashDay({ businessDate: summary.data.businessDate, openingCash: opening, countedCash: counted, notes }); setClosing(false); setOpeningCash(''); setCountedCash(''); setNotes(''); refresh(); } catch (cause) { setError(cause instanceof Error ? cause.message : 'Cash day could not be closed.'); } finally { setBusy(false); } };
+  const voidClosing = async () => { if (!voiding) return; setBusy(true); setError(''); try { await adminApi.voidCashClosing(voiding.id, voidReason); setVoiding(undefined); setVoidReason(''); refresh(); } catch (cause) { setError(cause instanceof Error ? cause.message : 'Cash closing could not be voided.'); } finally { setBusy(false); } };
+  return <Panel className="cash-close-panel"><div className="cash-close-main"><span className="cash-close-icon"><LockKeyhole /></span><div><small>Daily cash control</small><h2>{summary.data?.closing ? 'Today is closed' : 'Today is open'}</h2><p>{summary.data ? `${summary.data.paymentCount} verified payments · ${money(summary.data.cashCollected)} collected` : summary.error ?? 'Loading today’s ledger…'}</p></div><span className={`record-state ${summary.data?.closing ? 'active' : 'paused'}`}>{summary.data?.closing ? 'Closed' : 'Open'}</span><div className="cash-close-actions"><button className="button secondary" onClick={() => setHistoryOpen((value) => !value)}>{historyOpen ? 'Hide history' : 'Closing history'}</button><button className="button primary" disabled={!summary.data || Boolean(summary.data.closing)} onClick={() => { setError(''); setClosing(true); }}>Close today’s cash</button></div></div>
+    {historyOpen && <div className="cash-close-history">{history.data?.items.length ? history.data.items.map((item) => <article key={item.id}><div><strong>{new Date(`${item.businessDate}T00:00:00+08:00`).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })}</strong><small>{item.paymentCount} payments · closed by {item.closedBy}</small></div><span className={`record-state ${item.status === 'CLOSED' ? 'active' : 'cancelled'}`}>{item.status}</span><div><small>Expected</small><strong>{money(item.expectedCash)}</strong></div><div><small>Counted</small><strong>{money(item.countedCash)}</strong></div><div><small>Variance</small><strong className={item.variance === 0 ? '' : item.variance > 0 ? 'positive' : 'negative'}>{money(item.variance)}</strong></div>{item.status === 'CLOSED' && <button className="button danger compact" onClick={() => { setError(''); setVoidReason(''); setVoiding(item); }}>Void closing</button>}</article>) : <p>No completed cash closings yet.</p>}</div>}
+    {closing && summary.data && <Modal title="Close today’s cash" onClose={() => setClosing(false)}><form className="form-grid" onSubmit={submit}><div className="notice full-row"><LockKeyhole />After closing, no payment can be added or voided for today unless this closing is voided by the owner.</div><label>Opening cash<input type="number" min="0" max="100000000" step="0.01" value={openingCash} onChange={(event) => setOpeningCash(event.target.value)} required /></label><label>Counted cash<input type="number" min="0" max="100000000" step="0.01" value={countedCash} onChange={(event) => setCountedCash(event.target.value)} required /></label><div className="cash-close-calculation full-row"><span><small>Collected</small><strong>{money(summary.data.cashCollected)}</strong></span><span><small>Expected drawer</small><strong>{money(expected)}</strong></span><span><small>Variance</small><strong className={variance === 0 ? '' : variance > 0 ? 'positive' : 'negative'}>{money(variance)}</strong></span></div><label className="full-row">Closing note (optional)<textarea value={notes} onChange={(event) => setNotes(event.target.value)} maxLength={500} placeholder="Shift note or explanation for any variance" /></label>{error && <div className="form-error full-row">{error}</div>}<div className="modal-actions full-row"><button type="button" className="button secondary" onClick={() => setClosing(false)}>Cancel</button><button className="button primary" disabled={busy}>{busy ? 'Closing…' : 'Confirm cash closing'}</button></div></form></Modal>}
+    {voiding && <Modal title="Void this cash closing?" onClose={() => setVoiding(undefined)}><div className="notice"><ShieldCheck />This reopens {voiding.businessDate} for corrections. The original closing remains in the audit history.</div><label className="modal-field">Reason<textarea value={voidReason} onChange={(event) => setVoidReason(event.target.value)} minLength={5} maxLength={500} placeholder="Explain why this day must be reopened" /></label>{error && <div className="form-error">{error}</div>}<div className="modal-actions"><button className="button secondary" onClick={() => setVoiding(undefined)}>Cancel</button><button className="button danger" disabled={busy || voidReason.trim().length < 5} onClick={voidClosing}>{busy ? 'Reopening…' : 'Void and reopen day'}</button></div></Modal>}
+  </Panel>;
 }
 function PaymentReceiptModal({ paymentId, viewerRole, onClose, onChanged }: { paymentId: string; viewerRole: AdminUser['role']; onClose: () => void; onChanged: () => void }) {
   const result = useLoad(() => adminApi.payment(paymentId)); const [voiding, setVoiding] = useState(false); const [reason, setReason] = useState(''); const [relatedAction, setRelatedAction] = useState<'KEEP' | 'CANCEL_MEMBERSHIP' | 'VOID_VISIT'>('KEEP'); const [busy, setBusy] = useState(false); const [error, setError] = useState('');
@@ -605,22 +763,36 @@ function AnnouncementModal({ item, onClose, onSaved }: { item: Announcement | nu
 const reportMoney = (amount: number) => `₱${amount.toLocaleString('en-PH', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 const reportTypeLabels: Record<ReportData['revenueBreakdown'][number]['type'], string> = { MEMBERSHIP: 'Memberships', WALK_IN: 'Walk-ins', CARD_REPLACEMENT: 'Card replacements' };
 function ReportsPage() {
-  const [days, setDays] = useState<7 | 30 | 90>(30);
-  const periodControl = <div className="report-period" aria-label="Report period">{([7, 30, 90] as const).map((value) => <button key={value} className={days === value ? 'active' : ''} onClick={() => setDays(value)}>{value} days</button>)}</div>;
-  return <><PageHeader title="Reports & Analytics" subtitle="Verified cash, visits, membership and member growth summaries." icon={<BarChart3 />} action={periodControl} /><ReportsContent key={days} days={days} /></>;
+  const [range, setRange] = useState<7 | 30 | 90 | { from: string; to: string }>(30);
+  const [customOpen, setCustomOpen] = useState(false); const [from, setFrom] = useState(''); const [to, setTo] = useState(''); const [rangeError, setRangeError] = useState('');
+  const periodControl = <div className="report-period" aria-label="Report period">{([7, 30, 90] as const).map((value) => <button key={value} className={range === value ? 'active' : ''} onClick={() => { setRange(value); setCustomOpen(false); }}>{value} days</button>)}<button className={typeof range === 'object' ? 'active' : ''} onClick={() => setCustomOpen((value) => !value)}>Custom</button></div>;
+  const applyCustom = (event: FormEvent) => { event.preventDefault(); if (!from || !to) { setRangeError('Choose both dates.'); return; } if (from > to) { setRangeError('The start date must be before the end date.'); return; } const span = Math.round((new Date(`${to}T00:00:00+08:00`).getTime() - new Date(`${from}T00:00:00+08:00`).getTime()) / 86_400_000) + 1; if (span > 366) { setRangeError('Choose a range of 366 days or less.'); return; } setRangeError(''); setRange({ from, to }); setCustomOpen(false); };
+  return <><PageHeader title="Reports & Analytics" subtitle="Verified cash, visits, membership and member growth summaries." icon={<BarChart3 />} action={periodControl} />{customOpen && <Panel className="report-custom-panel"><form onSubmit={applyCustom}><div><small>Custom reporting window</small><strong>Choose up to 366 calendar days</strong></div><PremiumDatePicker value={from} onChange={setFrom} placeholder="From date" /><PremiumDatePicker value={to} onChange={setTo} placeholder="To date" /><button className="button primary">Apply range</button></form>{rangeError && <div className="form-error">{rangeError}</div>}</Panel>}<ReportsContent key={typeof range === 'number' ? range : `${range.from}-${range.to}`} range={range} /></>;
 }
-function ReportsContent({ days }: { days: 7 | 30 | 90 }) {
-  const result = useLoad(() => adminApi.reports(days));
+function ReportsContent({ range }: { range: 7 | 30 | 90 | { from: string; to: string } }) {
+  const result = useLoad(() => adminApi.reports(range));
   if (!result.data) return <Panel><ConnectionState {...result} reload={result.reload} empty="No report data available" /></Panel>;
   const { summary, daily, monthlyActivity, revenueBreakdown, membershipStatus, topPlans, period } = result.data;
+  const days = period.days;
   const average = summary.transactions ? summary.revenue / summary.transactions : 0;
-  const maxRevenue = Math.max(...daily.map((row) => row.revenue), 1);
-  const maxTraffic = Math.max(...daily.map((row) => row.attendance + row.walkIns), 1);
+  const chartChunkSize = daily.length > 90 ? Math.ceil(daily.length / 60) : 1;
+  const chartDaily = chartChunkSize === 1 ? daily : Array.from({ length: Math.ceil(daily.length / chartChunkSize) }, (_, index) => {
+    const chunk = daily.slice(index * chartChunkSize, (index + 1) * chartChunkSize); const last = chunk[chunk.length - 1]!;
+    return { date: last.date, revenue: chunk.reduce((total, row) => total + row.revenue, 0), transactions: chunk.reduce((total, row) => total + row.transactions, 0), attendance: chunk.reduce((total, row) => total + row.attendance, 0), walkIns: chunk.reduce((total, row) => total + row.walkIns, 0), newMembers: chunk.reduce((total, row) => total + row.newMembers, 0) };
+  });
+  const maxRevenue = Math.max(...chartDaily.map((row) => row.revenue), 1);
+  const trafficRows = daily.slice(days > 7 ? -14 : 0).reverse();
+  const maxTraffic = Math.max(...trafficRows.map((row) => row.attendance + row.walkIns), 1);
   const maxBreakdown = Math.max(...revenueBreakdown.map((row) => row.amount), 1);
   const totalMemberships = Object.values(membershipStatus).reduce((total, value) => total + value, 0);
   const dateLabel = (date: string, compact = false) => new Date(`${date}T00:00:00+08:00`).toLocaleDateString('en-PH', compact ? { month: 'short', day: 'numeric' } : { month: 'short', day: 'numeric', year: 'numeric' });
-  return <div className="reports-page">
-    <div className="report-range"><CalendarClock /><span>Showing verified records from <strong>{dateLabel(period.from)}</strong> to <strong>{dateLabel(period.to)}</strong></span></div>
+  const exportCsv = () => {
+    const quote = (value: string | number) => `"${String(value).replaceAll('"', '""')}"`;
+    const rows: Array<Array<string | number>> = [['X-TRIM FIT GYM REPORT'], ['Period', period.from, period.to], [], ['SUMMARY'], ['Metric', 'Value'], ['Cash collected', summary.revenue], ['Transactions', summary.transactions], ['Attendance', summary.attendance], ['Walk-ins', summary.walkIns], ['New members', summary.newMembers], ['Active memberships', summary.activeMemberships], [], ['REVENUE SOURCES'], ['Type', 'Amount', 'Payments'], ...revenueBreakdown.map((row) => [reportTypeLabels[row.type], row.amount, row.count]), [], ['MEMBERSHIP STATUS'], ['Status', 'Records'], ...Object.entries(membershipStatus).map(([status, count]) => [status, count]), [], ['TOP PLANS STARTED'], ['Plan', 'Memberships', 'Value'], ...topPlans.map((plan) => [plan.name, plan.count, plan.value]), [], ['DAILY RECORDS'], ['Date', 'Revenue', 'Transactions', 'Attendance', 'Walk-ins', 'New members'], ...daily.map((row) => [row.date, row.revenue, row.transactions, row.attendance, row.walkIns, row.newMembers])];
+    const blob = new Blob([`\uFEFF${rows.map((row) => row.map(quote).join(',')).join('\r\n')}`], { type: 'text/csv;charset=utf-8' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `xtrim-report-${period.from}-to-${period.to}.csv`; link.click(); URL.revokeObjectURL(url);
+  };
+  return <div className="reports-page" id="printable-report">
+    <div className="report-range"><div><CalendarClock /><span>Showing verified records from <strong>{dateLabel(period.from)}</strong> to <strong>{dateLabel(period.to)}</strong></span></div><div className="report-export-actions"><button className="button secondary" onClick={exportCsv}><Download />Export CSV</button><button className="button secondary" onClick={() => window.print()}><Printer />Print / save PDF</button></div></div>
     <section className="report-summary">
       <article><span className="report-icon"><PhilippinePeso /></span><div><small>Cash collected</small><strong>{reportMoney(summary.revenue)}</strong><p>{summary.transactions} verified {summary.transactions === 1 ? 'transaction' : 'transactions'} · {reportMoney(average)} average</p></div></article>
       <article><span className="report-icon"><ScanLine /></span><div><small>Member attendance</small><strong>{summary.attendance.toLocaleString()}</strong><p>Accepted NFC and manual attendance records</p></div></article>
@@ -629,9 +801,9 @@ function ReportsContent({ days }: { days: 7 | 30 | 90 }) {
     </section>
     <div className="report-grid">
       <MonthlyActivityChart rows={monthlyActivity} />
-      <Panel className="report-chart-panel"><div className="report-panel-head"><div><span>Cash performance</span><h2>Revenue trend</h2></div><TrendingUp /></div><div className="revenue-chart" aria-label="Daily cash revenue chart">{daily.map((row, index) => <div className="revenue-column" key={row.date} title={`${dateLabel(row.date)}: ${reportMoney(row.revenue)}`}><div className="revenue-value">{row.revenue > 0 ? reportMoney(row.revenue) : ''}</div><div className="revenue-track"><span style={{ height: `${Math.max(row.revenue ? 7 : 0, (row.revenue / maxRevenue) * 100)}%` }} /></div>{(days === 7 || index % (days === 30 ? 5 : 15) === 0 || index === daily.length - 1) && <small>{dateLabel(row.date, true)}</small>}</div>)}</div></Panel>
+      <Panel className="report-chart-panel"><div className="report-panel-head"><div><span>Cash performance</span><h2>Revenue trend</h2></div><TrendingUp /></div><div className="revenue-chart" aria-label="Cash revenue trend chart">{chartDaily.map((row, index) => <div className="revenue-column" key={row.date} title={`${dateLabel(row.date)}: ${reportMoney(row.revenue)}${chartChunkSize > 1 ? ` across ${chartChunkSize} days` : ''}`}><div className="revenue-value">{row.revenue > 0 ? reportMoney(row.revenue) : ''}</div><div className="revenue-track"><span style={{ height: `${Math.max(row.revenue ? 7 : 0, (row.revenue / maxRevenue) * 100)}%` }} /></div>{(chartDaily.length <= 10 || index % Math.ceil(chartDaily.length / 7) === 0 || index === chartDaily.length - 1) && <small>{dateLabel(row.date, true)}</small>}</div>)}</div></Panel>
       <Panel className="report-breakdown"><div className="report-panel-head"><div><span>Revenue mix</span><h2>Collection sources</h2></div><PhilippinePeso /></div><div className="breakdown-list">{revenueBreakdown.map((row) => <div key={row.type}><div><span>{reportTypeLabels[row.type]}</span><strong>{reportMoney(row.amount)}</strong></div><div className="breakdown-track"><span style={{ width: `${(row.amount / maxBreakdown) * 100}%` }} /></div><small>{row.count} {row.count === 1 ? 'payment' : 'payments'}</small></div>)}</div></Panel>
-      <Panel className="report-traffic"><div className="report-panel-head"><div><span>Gym activity</span><h2>Daily visits</h2></div><Activity /></div><div className="traffic-list">{daily.slice(days === 90 ? -14 : days === 30 ? -10 : 0).reverse().map((row) => { const total = row.attendance + row.walkIns; return <div key={row.date}><time>{dateLabel(row.date, true)}</time><div className="traffic-track"><span className="member" style={{ width: `${(row.attendance / maxTraffic) * 100}%` }} /><span className="walkin" style={{ width: `${(row.walkIns / maxTraffic) * 100}%` }} /></div><strong>{total}</strong></div>; })}</div><div className="report-legend"><span className="member">Member attendance</span><span className="walkin">Walk-ins</span></div></Panel>
+      <Panel className="report-traffic"><div className="report-panel-head"><div><span>Gym activity</span><h2>Daily visits</h2></div><Activity /></div><div className="traffic-list">{trafficRows.map((row) => { const total = row.attendance + row.walkIns; return <div key={row.date}><time>{dateLabel(row.date, true)}</time><div className="traffic-track"><span className="member" style={{ width: `${(row.attendance / maxTraffic) * 100}%` }} /><span className="walkin" style={{ width: `${(row.walkIns / maxTraffic) * 100}%` }} /></div><strong>{total}</strong></div>; })}</div><div className="report-legend"><span className="member">Member attendance</span><span className="walkin">Walk-ins</span></div></Panel>
       <Panel className="report-memberships"><div className="report-panel-head"><div><span>Current portfolio</span><h2>Membership health</h2></div><WalletCards /></div><div className="membership-health"><div className="membership-total"><strong>{totalMemberships}</strong><span>Total membership records</span></div><div className="membership-statuses">{Object.entries(membershipStatus).map(([status, count]) => <div key={status}><span className={status} /><small>{status}</small><strong>{count}</strong></div>)}</div></div><div className="top-plans"><h3>Plans started in this period</h3>{topPlans.length ? topPlans.map((plan, index) => <div key={plan.name}><span>{index + 1}</span><div><strong>{plan.name}</strong><small>{plan.count} {plan.count === 1 ? 'membership' : 'memberships'}</small></div><b>{reportMoney(plan.value)}</b></div>) : <p>No memberships started in this period.</p>}</div></Panel>
     </div>
   </div>;
